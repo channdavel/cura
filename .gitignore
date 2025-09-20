@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.env
+.DS_Store
+cb_2023_us_tract_500k
+cb_2023_us_tract_500k.*
