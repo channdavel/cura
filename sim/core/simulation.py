@@ -1,4 +1,5 @@
 import random
+import numpy as np
 from typing import Dict, List
 from sim.core.entities import Node
 
@@ -9,6 +10,7 @@ class Simulation:
         self.recovery_rate = recovery_rate
         self.mortality_rate = mortality_rate
         self.day = 0
+        self.daily_new_infections = 0  # Add this line
 
     def seed_infection(self, num_nodes: int = 1):
         """Randomly infects a number of nodes to start the simulation."""
@@ -24,6 +26,14 @@ class Simulation:
         1. Intra-node spread: Exponential growth within a node, scaled by density.
         2. Inter-node spread: Probabilistic spread to neighbors based on infection pressure.
         """
+        # Add daily variation to rates (at the beginning of step)
+        daily_infection_rate = self.infection_rate * np.random.normal(1.0, 0.1)  # ±10% variation
+        daily_recovery_rate = self.recovery_rate * np.random.normal(1.0, 0.05)   # ±5% variation
+        
+        # Clamp to reasonable bounds
+        daily_infection_rate = max(0.001, daily_infection_rate)  # Don't go below 0.1%
+        daily_recovery_rate = max(0.001, min(0.5, daily_recovery_rate))  # Between 0.1% and 50%
+        
         # Store changes to apply at the end of the step to avoid cascading effects
         newly_infected_counts = {node_id: 0 for node_id in self.nodes}
         newly_recovered_counts = {node_id: 0 for node_id in self.nodes}
@@ -40,11 +50,10 @@ class Simulation:
 
             # Calculate potential new infections within this node based on SIR model
             potential_intra_node_infections = (
-                self.infection_rate * density_factor *
+                daily_infection_rate * density_factor *
                 node.susceptible_pop * node.infectious_pop
             ) / node.population if node.population > 0 else 0
             
-            # --- FIX: Ensure infection grows from a single case ---
             # If there's any potential, infect at least one person, otherwise use the calculated value.
             if 0 < potential_intra_node_infections < 1:
                 new_intra_node_infections = 1
@@ -58,21 +67,40 @@ class Simulation:
             # --- 2. Inter-node spread (to neighbors) ---
             # Infection pressure is the percentage of the node's population that is infectious
             infection_pressure = node.infectious_pop / node.population if node.population > 0 else 0
-            
-            # Attempt to infect each neighbor
+
+            # Base mobility rate - what % of people interact between neighboring regions daily
+            # In the future, this could be per-node (urban vs rural)
+            base_mobility_rate = 0.01  # 0.5% daily inter-regional interaction
+
+            # Attempt to infect each neighbor using flow model
             for neighbor_id in node.neighbors:
                 neighbor_node = self.nodes.get(neighbor_id)
                 if neighbor_node and neighbor_node.susceptible_pop > 0:
-                    # The chance of spread is proportional to the source's infection pressure
-                    if random.random() < infection_pressure:
-                        # If successful, infect a small number of people in the neighbor node,
-                        # proportional to the source's pressure.
-                        # Let's say up to 5 people can be infected this way per event.
-                        new_infections_in_neighbor = max(1, int(round(infection_pressure * 5)))
-                        newly_infected_counts[neighbor_id] += new_infections_in_neighbor
+                    # Calculate expected transmissions based on:
+                    # - How infected the source region is (infection_pressure)
+                    # - How much movement there is between regions (base_mobility_rate)
+                    # - How many susceptible people are in the target region
+                    expected_transmissions = (
+                        infection_pressure *
+                        base_mobility_rate *
+                        neighbor_node.susceptible_pop
+                    )
+                    
+                    # Convert expected (fractional) transmissions to actual (integer) transmissions
+                    if expected_transmissions > 0:
+                        if expected_transmissions < 1:
+                            actual_transmissions = 1 if random.random() < expected_transmissions else 0
+                        else:
+                            # Use Poisson for more realistic variation
+                            actual_transmissions = np.random.poisson(expected_transmissions)
+                            actual_transmissions = max(0, actual_transmissions)  # Ensure non-negative
+                        
+                        # Don't exceed available susceptible population
+                        actual_transmissions = min(neighbor_node.susceptible_pop, actual_transmissions)
+                        newly_infected_counts[neighbor_id] += actual_transmissions
 
             # --- SIR model: Recoveries and Deaths ---
-            new_recoveries = int(round(node.infectious_pop * self.recovery_rate))
+            new_recoveries = int(round(node.infectious_pop * daily_recovery_rate))
             new_deaths = int(round(node.infectious_pop * self.mortality_rate))
             
             # Ensure we don't recover/decease more people than are infectious
@@ -83,9 +111,12 @@ class Simulation:
             newly_deceased_counts[node_id] = new_deaths
 
         # --- 3. Apply all calculated changes simultaneously ---
+        total_new_infections_today = 0  # Track daily new infections
+        
         for node_id, node in self.nodes.items():
             # Clamp new infections to the available susceptible population
             total_new_infections = min(node.susceptible_pop, newly_infected_counts[node_id])
+            total_new_infections_today += total_new_infections  # Add this line
             
             node.susceptible_pop -= total_new_infections
             node.infectious_pop += total_new_infections
@@ -96,6 +127,7 @@ class Simulation:
             node.recovered_pop += newly_recovered_counts[node_id]
             node.deceased_pop += newly_deceased_counts[node_id]
 
+        self.daily_new_infections = total_new_infections_today  # Add this line
         self.day += 1
 
     def run(self, days: int):

@@ -9,10 +9,10 @@ import numpy as np
 NODES_CSV = "tract_nodes.csv"
 NEIGHBORS_JSON = "tract_neighbors.json"
 SIM_DAYS = 360
-INFECTION_RATE = 0.05
-RECOVERY_RATE = 0.03
+INFECTION_RATE = 0.1
+RECOVERY_RATE = 0.01
 MORTALITY_RATE = 0.005
-SEED_NODES = 5
+SEED_NODES = 1
 
 def run_simulation():
     """Main function to run and visualize the pandemic simulation."""
@@ -83,6 +83,9 @@ def run_simulation():
 
     def update(frame):
         """Animation update function called for each frame (day)."""
+        # Run one simulation step
+        sim.step()
+        
         # --- Update Line Graphs ---
         stats_after = sim.get_total_population()
         current_total_infected = stats_after['infectious']
@@ -90,7 +93,6 @@ def run_simulation():
         # Calculate new infections for the day
         last_total_infected = history_total_infected[-1] if history_total_infected else 0
         new_infections_today = current_total_infected - last_total_infected
-        # This can be negative if recoveries/deaths outpace new infections, so we floor at 0 for the daily new graph
         new_infections_today = max(0, new_infections_today)
 
 
