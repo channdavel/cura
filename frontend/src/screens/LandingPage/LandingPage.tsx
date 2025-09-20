@@ -2,10 +2,8 @@ import { Button } from "../../components/ui/button";
 import Threads from "../../components/Threads/Threads";
 
 const navigationItems = [
-  { label: "Home", href: "#home" },
-  { label: "Simulation", href: "#simulation" },
-  { label: "About", href: "#about" },
-  { label: "Contact", href: "#contact" },
+  { label: " ", href: "#home" },
+  
 ];
 
 export const LandingPage = (): JSX.Element => {
@@ -35,7 +33,6 @@ export const LandingPage = (): JSX.Element => {
                 <span className="text-2xl font-bold text-gray-900 group-hover:text-[#C54444] transition-colors duration-300">
                   Cura
                 </span>
-                <span className="text-xs text-gray-500 -mt-1 font-medium">Pandemic Simulation</span>
               </div>
             </div>
 
