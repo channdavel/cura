@@ -225,7 +225,7 @@ def run_simulation_background():
     global simulation_running, census_data, simulation_speed_multiplier
     
     max_steps = 1000  # Maximum simulation steps
-    update_interval = 10  # Update frontend every 10 steps
+    update_interval = 2  # Update frontend every 2 steps
     step_count = 0
     
     try:
@@ -307,13 +307,23 @@ def get_simulation_state(simulation_id: str):
 @app.route('/api/simulation/<simulation_id>/reset', methods=['POST'])
 def reset_simulation(simulation_id: str):
     """Reset simulation to initial state."""
-    global simulation_running, census_data
+    global simulation_running, census_data, current_simulation, simulation_thread
     
     # Stop simulation
     simulation_running = False
     
+    # Clear current simulation
+    current_simulation = None
+    
+    # Wait for thread to finish if it's running
+    if simulation_thread and simulation_thread.is_alive():
+        simulation_thread.join(timeout=1.0)
+    simulation_thread = None
+    
     # Reload initial census data
     census_data = load_census_data()
+    
+    print(f"Simulation {simulation_id} reset to initial state")
     
     return jsonify({
         "id": simulation_id,

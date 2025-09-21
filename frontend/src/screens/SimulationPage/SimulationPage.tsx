@@ -873,23 +873,25 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     // Stop polling
     stopPolling();
     setIsSimulationRunning(false);
+    
+    // Reset simulation on backend if we have a simulation ID
+    const currentSimId = simulationId || 'default';
+    try {
+      await fetch(`http://localhost:8001/api/simulation/${currentSimId}/reset`, {
+        method: 'POST',
+      });
+      console.log('Backend simulation reset successfully');
+    } catch (error) {
+      console.error('Failed to reset simulation on backend:', error);
+    }
+    
+    // Clear frontend state
     setSelectedTile(null);
     setSelectedTileData(null);
     setSimulationId(null);
     setStatistics(null);
     setInitialInfectionNode(null); // Clear the starting node indicator
     updateInitialInfectionIndicator(null); // Clear red dot from map
-    
-    // Reset simulation on backend if we have a simulation ID
-    if (simulationId) {
-      try {
-        await fetch(`http://localhost:8001/api/simulation/${simulationId}/reset`, {
-          method: 'POST',
-        });
-      } catch (error) {
-        console.error('Failed to reset simulation on backend:', error);
-      }
-    }
     
     // Reload original census data
     const loadCensusData = async () => {
@@ -907,17 +909,17 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
                   lat: props.lat,
                   lon: props.lon,
                   population: props.population || 0,
-                  infectious_pop: props.infectious_pop || 0,
-                  recovered_pop: props.recovered_pop || 0,
-                  deceased_pop: props.deceased_pop || 0,
-                  susceptible_pop: props.susceptible_pop || props.population || 0,
+                  infectious_pop: 0, // Reset to 0
+                  recovered_pop: 0,  // Reset to 0
+                  deceased_pop: 0,   // Reset to 0
+                  susceptible_pop: props.population || 0, // Full population is susceptible
                   area_km2: props.area_km2 || 1,
                   population_density: props.population_density || 0,
                   healthcare_capacity: props.healthcare_capacity || 0,
                   mobility_factor: props.mobility_factor || 1,
                   climate_factor: props.climate_factor || 1,
                   neighbors: props.neighbors || [],
-                  is_quarantined: props.is_quarantined || false,
+                  is_quarantined: false, // Reset quarantine
                   extras: {
                     geometry: feature.geometry
                   }
@@ -926,6 +928,9 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
             });
             setAllCensusData(convertedData);
             filterDataByZoom(convertedData, currentZoom);
+            
+            // Update the map with reset data
+            updateMapDataSource(convertedData);
           }
         }
       } catch (error) {
@@ -934,7 +939,7 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     };
     
     await loadCensusData();
-    console.log('Simulation reset');
+    console.log('Simulation reset completed');
   };
 
   return (
@@ -1095,94 +1100,42 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
             </div>
           </div>
 
-          {/* Comprehensive Statistics */}
-          {statistics && (
-            <div>
-              <h3 className="text-lg font-semibold mb-3 text-gray-900">Pandemic Statistics</h3>
-              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-4 rounded-lg space-y-3">
-                {/* Day Counter */}
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-600">Day {statistics.day || 0}</div>
-                  <div className="text-sm text-gray-600">Simulation Progress</div>
-                </div>
-                
-                {/* Population Overview */}
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="bg-white/70 p-2 rounded border">
-                    <div className="font-semibold text-gray-700">Total Population</div>
-                    <div className="text-lg font-bold text-gray-900">{(statistics.total_population || 0).toLocaleString()}</div>
-                  </div>
-                  <div className="bg-white/70 p-2 rounded border">
-                    <div className="font-semibold text-blue-700">Affected Areas</div>
-                    <div className="text-lg font-bold text-blue-600">{(statistics.infected_areas || 0).toLocaleString()}</div>
-                  </div>
-                </div>
-
-                {/* SIR Model Stats */}
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center p-2 bg-green-100 rounded border">
-                    <span className="font-medium text-green-800">💚 Susceptible</span>
-                    <div className="text-right">
-                      <div className="font-bold text-green-700">{(statistics.susceptible || 0).toLocaleString()}</div>
-                      <div className="text-xs text-green-600">
-                        {((statistics.susceptible || 0) / (statistics.total_population || 1) * 100).toFixed(1)}%
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-between items-center p-2 bg-red-100 rounded border">
-                    <span className="font-medium text-red-800">Infectious</span>
-                    <div className="text-right">
-                      <div className="font-bold text-red-700">{(statistics.infectious || 0).toLocaleString()}</div>
-                      <div className="text-xs text-red-600">{(statistics.infection_rate || 0).toFixed(2)}%</div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-between items-center p-2 bg-blue-100 rounded border">
-                    <span className="font-medium text-blue-800">Recovered</span>
-                    <div className="text-right">
-                      <div className="font-bold text-blue-700">{(statistics.recovered || 0).toLocaleString()}</div>
-                      <div className="text-xs text-blue-600">
-                        {((statistics.recovered || 0) / (statistics.total_population || 1) * 100).toFixed(1)}%
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-between items-center p-2 bg-gray-100 rounded border">
-                    <span className="font-medium text-gray-800">Deceased</span>
-                    <div className="text-right">
-                      <div className="font-bold text-gray-700">{(statistics.deceased || 0).toLocaleString()}</div>
-                      <div className="text-xs text-gray-600">
-                        {((statistics.deceased || 0) / (statistics.total_population || 1) * 100).toFixed(2)}%
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Key Metrics */}
-                <div className="pt-2 border-t border-blue-200">
-                  <div className="text-sm space-y-1">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Infection Rate:</span>
-                      <span className="font-semibold text-red-600">{(statistics.infection_rate || 0).toFixed(2)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Mortality Rate:</span>
-                      <span className="font-semibold text-gray-700">
-                        {((statistics.deceased || 0) / (statistics.total_population || 1) * 100).toFixed(3)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Recovery Rate:</span>
-                      <span className="font-semibold text-blue-600">
-                        {((statistics.recovered || 0) / (statistics.total_population || 1) * 100).toFixed(2)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
+          {/* Color Legend */}
+          <div>
+            <h3 className="text-lg font-semibold mb-3 text-gray-900">Color Legend</h3>
+            <div className="space-y-2">
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-green-500 rounded-full"></div>
+                <span className="text-sm text-gray-700">Healthy (0%)</span>
               </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-yellow-500 rounded-full"></div>
+                <span className="text-sm text-gray-700">Low (0-0.5%)</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-orange-500 rounded-full"></div>
+                <span className="text-sm text-gray-700">Medium (0.5-2%)</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-red-500 rounded-full"></div>
+                <span className="text-sm text-gray-700">High (2-5%)</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-red-900 rounded-full"></div>
+                <span className="text-sm text-gray-700">Critical (5%+)</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-purple-500 rounded-full border-2 border-white"></div>
+                <span className="text-sm text-gray-700">Quarantined</span>
+              </div>
+              {initialInfectionNode && (
+                <div className="flex items-center space-x-2">
+                  <div className="w-4 h-4 bg-red-600 rounded-full border-2 border-white"></div>
+                  <span className="text-sm text-gray-700">Initial Infection Site</span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* Selected Tile Info */}
           {/* Selected Tile Info */}
