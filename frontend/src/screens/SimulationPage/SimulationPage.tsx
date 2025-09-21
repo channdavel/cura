@@ -46,14 +46,57 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   const [isMapLoaded, setIsMapLoaded] = useState(false);
   const [selectedTile, setSelectedTile] = useState<string | null>(null);
   const [selectedTileData, setSelectedTileData] = useState<CensusTractNode | null>(null);
+  const [currentZoom, setCurrentZoom] = useState(4); // Track current zoom level
+  const [allCensusData, setAllCensusData] = useState<Record<string, CensusTractNode>>({});
+  const [censusData, setCensusData] = useState<Record<string, CensusTractNode>>({});
   const [simulationParams, setSimulationParams] = useState<SimulationParams>({
     airborne: 0.3,
     waterborne: 0.2,
     contact_based: 0.5
   });
   const [isSimulationRunning, setIsSimulationRunning] = useState(false);
-  const [censusData, setCensusData] = useState<Record<string, CensusTractNode>>({});
   const [isLoadingData, setIsLoadingData] = useState(true);
+
+  // Function to filter census data based on zoom level
+  const filterDataByZoom = (allData: Record<string, CensusTractNode>, zoom: number) => {
+    const totalTracts = Object.keys(allData).length;
+    let maxTracts: number;
+    
+    // Define zoom-based limits to maintain performance
+    if (zoom <= 3) {
+      maxTracts = Math.min(500, totalTracts);
+    } else if (zoom <= 5) {
+      maxTracts = Math.min(2000, totalTracts);
+    } else if (zoom <= 7) {
+      maxTracts = Math.min(8000, totalTracts);
+    } else if (zoom <= 9) {
+      maxTracts = Math.min(20000, totalTracts);
+    } else {
+      maxTracts = totalTracts; // Show all at high zoom
+    }
+    
+    console.log(`Zoom level ${zoom}: showing ${maxTracts} of ${totalTracts} tracts`);
+    
+    if (maxTracts >= totalTracts) {
+      setCensusData(allData);
+      return;
+    }
+    
+    // Sample tracts by population to show most populated areas first
+    const tractEntries = Object.entries(allData);
+    const sortedByPopulation = tractEntries.sort((a, b) => {
+      const popA = a[1].population || a[1].extras?.population || 0;
+      const popB = b[1].population || b[1].extras?.population || 0;
+      return popB - popA;
+    });
+    
+    const filteredData: Record<string, CensusTractNode> = {};
+    sortedByPopulation.slice(0, maxTracts).forEach(([id, tract]) => {
+      filteredData[id] = tract;
+    });
+    
+    setCensusData(filteredData);
+  };
 
   // Load census tract data
   useEffect(() => {
@@ -103,7 +146,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
             });
             
             if (Object.keys(convertedData).length > 0) {
-              setCensusData(convertedData);
+              setAllCensusData(convertedData);
+              filterDataByZoom(convertedData, currentZoom);
               console.log('Successfully loaded', Object.keys(convertedData).length, 'census tracts from GeoJSON with polygon boundaries');
               setIsLoadingData(false);
               return;
@@ -121,7 +165,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
         
         if (apiResponse.ok) {
           const data = await apiResponse.json();
-          setCensusData(data);
+          setAllCensusData(data);
+          filterDataByZoom(data, currentZoom);
           console.log(`Loaded ${Object.keys(data).length} census tracts from backend`);
           setIsLoadingData(false);
           return;
@@ -153,7 +198,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
           limitedData[key] = value as CensusTractNode;
         });
         
-        setCensusData(limitedData);
+        setAllCensusData(limitedData);
+        filterDataByZoom(limitedData, currentZoom);
         console.log(`Loaded ${Object.keys(limitedData).length} census tracts from static file`);
         
       } catch (staticError) {
@@ -197,13 +243,34 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       }
     });
 
+    // Add zoom change listener for level of detail
+    map.current.on('zoomend', () => {
+      if (map.current) {
+        const newZoom = Math.round(map.current.getZoom());
+        if (newZoom !== currentZoom) {
+          setCurrentZoom(newZoom);
+          // Apply new filtering based on zoom
+          if (Object.keys(allCensusData).length > 0) {
+            filterDataByZoom(allCensusData, newZoom);
+          }
+        }
+      }
+    });
+
     return () => {
       if (map.current) {
         map.current.remove();
         map.current = null;
       }
     };
-  }, [censusData]);
+  }, []);
+
+  // Apply zoom-based filtering when zoom level changes
+  useEffect(() => {
+    if (Object.keys(allCensusData).length > 0) {
+      filterDataByZoom(allCensusData, currentZoom);
+    }
+  }, [currentZoom, allCensusData]);
 
   // Add census data layers when data is loaded
   useEffect(() => {
