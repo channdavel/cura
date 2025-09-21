@@ -217,9 +217,23 @@ def main():
         json.dump(neighbors, f)
 
     # ----- build Node objects and emit a single graph JSON -----
-    print("Assembling Node graph JSON...")
+    print("Assembling Node graph JSON with geometry...")
     nodes = load_nodes_from_csv(OUT_NODES_CSV)
     attach_neighbors_from_json(nodes, OUT_NEIGHBORS_JSON)
+
+    # Add geometry data to each node's extras field
+    print("Adding polygon geometry to nodes...")
+    geometry_count = 0
+    for _, row in g.iterrows():
+        geoid = row["GEOID"]
+        if geoid in nodes:
+            # Convert geometry to GeoJSON format and store in extras
+            geometry_geojson = row["geometry"].__geo_interface__
+            nodes[geoid].extras = nodes[geoid].extras or {}
+            nodes[geoid].extras["geometry"] = geometry_geojson
+            geometry_count += 1
+    
+    print(f"Added geometry to {geometry_count} nodes")
 
     serializable_graph = {geoid: node.to_dict() for geoid, node in nodes.items()}
     with open(OUT_GRAPH_JSON, "w") as f:

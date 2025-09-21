@@ -119,3 +119,7 @@ __pycache__/
 # Census data
 cb_2023_us_tract_500k
 cb_2023_us_tract_500k.*
+us_census_graph.json
+us_census_tracts.geojson
+tract_nodes.csv
+tract_neighbors.json
