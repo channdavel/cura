@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Cura
 
 A modern React application built with TypeScript and Vite.
@@ -130,3 +131,21 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 Built with ❤️ using React, TypeScript, and Vite
+
+# Backend Simulation
+
+## Schema
+```json
+[
+    [
+        {
+            "geoid": int,
+            "totalPopulation": int,
+            "numInfected": int,
+            "numRecovered": int,
+            "numDeceased": int
+        },
+        ...
+    ]
+]
+```

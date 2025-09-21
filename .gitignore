@@ -111,3 +111,11 @@ temp/
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.pyc
+
+# Census data
+cb_2023_us_tract_500k
+cb_2023_us_tract_500k.*
