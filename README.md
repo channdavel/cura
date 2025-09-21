@@ -130,3 +130,20 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 Built with ❤️ using React, TypeScript, and Vite
+
+# Backend
+## Schema
+```json
+[
+    [
+        {
+            "geoid": int,
+            "totalPopulation": int,
+            "numInfected": int,
+            "numRecovered": int,
+            "numDeceased": int
+        },
+        ...
+    ]
+]
+```
