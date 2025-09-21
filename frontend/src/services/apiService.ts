@@ -11,9 +11,9 @@ export interface TileData {
 }
 
 export interface SimulationParams {
-  airborne: number;
-  waterborne: number;
-  contact_based: number;
+  infection_rate: number;
+  mortality_rate: number;
+  recovery_rate: number;
 }
 
 export interface SimulationResponse {

@@ -32,9 +32,21 @@ export interface CensusTractNode {
 }
 
 export interface SimulationParams {
-  airborne: number;
-  waterborne: number;
-  contact_based: number;
+  // Spread type switches
+  airborne: boolean;
+  waterborne: boolean;
+  contact_based: boolean;
+  
+  // Core simulation rates
+  mortality_rate: number;
+  recovery_rate: number;
+  
+  // Symptom toggles that modify rates
+  fever: boolean;        // increases mortality rate
+  coughing: boolean;     // increases infection rate
+  fatigue: boolean;      // decreases recovery rate
+  breathing_difficulty: boolean; // increases mortality rate
+  loss_of_taste: boolean;        // increases transmission (people don't realize they're sick)
 }
 
 interface SimulationPageProps {
@@ -51,11 +63,25 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   const [allCensusData, setAllCensusData] = useState<Record<string, CensusTractNode>>({});
   const [censusData, setCensusData] = useState<Record<string, CensusTractNode>>({});
   const [simulationParams, setSimulationParams] = useState<SimulationParams>({
-    airborne: 0.3,
-    waterborne: 0.2,
-    contact_based: 0.5
+    // Spread type switches
+    airborne: true,
+    waterborne: false,
+    contact_based: true,
+    
+    // Core simulation rates
+    mortality_rate: 0.02,    // 2%
+    recovery_rate: 0.1,      // 10%
+    
+    // Symptom toggles
+    fever: false,
+    coughing: false,
+    fatigue: false,
+    breathing_difficulty: false,
+    loss_of_taste: false
   });
   const [isSimulationRunning, setIsSimulationRunning] = useState(false);
+  const [isSimulationPaused, setIsSimulationPaused] = useState(false);
+  const [hasSimulationStarted, setHasSimulationStarted] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
@@ -792,6 +818,47 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     };
   }, []);
 
+  // Calculate infection rate based on transmission methods and symptoms
+  const calculateInfectionRate = (params: SimulationParams): number => {
+    let baseRate = 0;
+    
+    // Base transmission rates
+    if (params.airborne) baseRate += 0.4;      // Airborne is most contagious
+    if (params.waterborne) baseRate += 0.2;    // Waterborne is moderate
+    if (params.contact_based) baseRate += 0.3; // Contact-based is significant
+    
+    // Symptom modifiers
+    if (params.coughing) baseRate *= 1.5;              // Coughing increases transmission
+    if (params.loss_of_taste) baseRate *= 1.3;         // People don't realize they're sick
+    if (params.fever) baseRate *= 0.9;                 // Fever makes people stay home more
+    if (params.breathing_difficulty) baseRate *= 0.8;  // Severe symptoms = less mobility
+    
+    // Cap at reasonable maximum
+    return Math.min(baseRate, 0.8);
+  };
+
+  // Calculate adjusted mortality rate based on symptoms
+  const calculateMortalityRate = (params: SimulationParams): number => {
+    let rate = params.mortality_rate;
+    
+    if (params.fever) rate *= 1.4;                     // Fever increases mortality
+    if (params.breathing_difficulty) rate *= 1.8;      // Breathing issues are serious
+    if (params.fatigue) rate *= 1.1;                   // Fatigue slightly increases risk
+    
+    return Math.min(rate, 0.15); // Cap at 15%
+  };
+
+  // Calculate adjusted recovery rate based on symptoms
+  const calculateRecoveryRate = (params: SimulationParams): number => {
+    let rate = params.recovery_rate;
+    
+    if (params.fatigue) rate *= 0.7;                   // Fatigue slows recovery
+    if (params.breathing_difficulty) rate *= 0.6;      // Breathing issues slow recovery
+    if (params.fever) rate *= 0.8;                     // Fever slows recovery
+    
+    return Math.max(rate, 0.01); // Minimum 1% recovery rate
+  };
+
   const changeSimulationSpeed = async (newSpeed: number) => {
     try {
       const response = await fetch('http://localhost:8001/api/simulation/speed', {
@@ -814,58 +881,67 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   };
 
   const startSimulation = async () => {
-    if (isSimulationRunning) {
-      // Stop the simulation
+    if (!hasSimulationStarted) {
+      // First time starting the simulation
+      if (!selectedTile) {
+        alert('Please select a census tract by clicking on the map first. The selected tract will be the initial infection point for the simulation.');
+        return;
+      }
+
       try {
-        // Stop polling
+        setIsSimulationRunning(true);
+        setHasSimulationStarted(true);
+        setIsSimulationPaused(false);
+        setInitialInfectionNode(selectedTile);
+        updateInitialInfectionIndicator(selectedTile);
+        
+        const { apiService } = await import('../../services/apiService');
+        
+        // Calculate effective rates based on transmission methods and symptoms
+        const calculatedParams = {
+          infection_rate: calculateInfectionRate(simulationParams),
+          mortality_rate: calculateMortalityRate(simulationParams),
+          recovery_rate: calculateRecoveryRate(simulationParams)
+        };
+        
+        // Start simulation with selected tile as initial infection point
+        const response = await apiService.startSimulation(calculatedParams, selectedTile);
+        
+        console.log('Simulation started with calculated parameters:', calculatedParams);
+        console.log('Initial infected tile:', selectedTile);
+        
+        // Fetch initial statistics
+        const stats = await apiService.getStatistics();
+        if (stats) {
+          setStatistics(stats);
+        }
+        
+        // Start polling for updates
+        startPollingSimulationData(response.id);
+        
+      } catch (error) {
+        console.error('Failed to start simulation:', error);
+        setIsSimulationRunning(false);
+        setHasSimulationStarted(false);
+        alert('Failed to start simulation. Please check the backend connection.');
+      }
+    } else {
+      // Simulation has already started, toggle pause/resume
+      if (isSimulationRunning) {
+        // Pause the simulation
         stopPolling();
         setIsSimulationRunning(false);
-        
-        // Stop simulation on backend if we have a simulation ID
+        setIsSimulationPaused(true);
+        console.log('Simulation paused');
+      } else {
+        // Resume the simulation
+        setIsSimulationRunning(true);
+        setIsSimulationPaused(false);
         if (simulationId) {
-          const { apiService } = await import('../../services/apiService');
-          await apiService.stopSimulation(simulationId);
-          console.log('Simulation stopped');
+          startPollingSimulationData(simulationId);
         }
-      } catch (error) {
-        console.error('Failed to stop simulation:', error);
+        console.log('Simulation resumed');
       }
-      return;
-    }
-
-    if (!selectedTile) {
-      alert('Please select a census tract by clicking on the map first. The selected tract will be the initial infection point for the simulation.');
-      return;
-    }
-
-    try {
-      setIsSimulationRunning(true);
-      setInitialInfectionNode(selectedTile); // Track the starting node
-      updateInitialInfectionIndicator(selectedTile); // Show red dot on map
-      
-      // Import apiService
-      const { apiService } = await import('../../services/apiService');
-      
-      // Start simulation with selected tile as initial infection point
-      const response = await apiService.startSimulation(simulationParams, selectedTile);
-      
-      console.log('Simulation started with parameters:', simulationParams);
-      console.log('Initial infected tile:', selectedTile);
-      console.log('Backend response:', response);
-      
-      // Fetch initial statistics
-      const stats = await apiService.getStatistics();
-      if (stats) {
-        setStatistics(stats);
-      }
-      
-      // Start polling for updates
-      startPollingSimulationData(response.id);
-      
-    } catch (error) {
-      console.error('Failed to start simulation:', error);
-      setIsSimulationRunning(false);
-      alert('Failed to start simulation. Please check the backend connection.');
     }
   };
 
@@ -873,6 +949,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     // Stop polling
     stopPolling();
     setIsSimulationRunning(false);
+    setIsSimulationPaused(false);
+    setHasSimulationStarted(false);
     
     // Reset simulation on backend if we have a simulation ID
     const currentSimId = simulationId || 'default';
@@ -970,61 +1048,154 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
             </div>
           </div>
 
-          {/* Simulation Parameters */}
+          {/* Transmission Types */}
           <div>
-            <h3 className="text-lg font-semibold mb-3 text-gray-900">Spread Parameters</h3>
+            <h3 className="text-lg font-semibold mb-3 text-gray-900">Transmission Methods</h3>
+            <div className="space-y-2">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={simulationParams.airborne}
+                  onChange={(e) => setSimulationParams(prev => ({
+                    ...prev,
+                    airborne: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Airborne transmission</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={simulationParams.waterborne}
+                  onChange={(e) => setSimulationParams(prev => ({
+                    ...prev,
+                    waterborne: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Waterborne transmission</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={simulationParams.contact_based}
+                  onChange={(e) => setSimulationParams(prev => ({
+                    ...prev,
+                    contact_based: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Contact-based transmission</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Core Simulation Rates */}
+          <div>
+            <h3 className="text-lg font-semibold mb-3 text-gray-900">Disease Parameters</h3>
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium mb-1 text-gray-700">
-                  Airborne ({simulationParams.airborne})
+                  Mortality Rate ({(simulationParams.mortality_rate * 100).toFixed(1)}%)
                 </label>
                 <input
                   type="range"
                   min="0"
-                  max="1"
-                  step="0.1"
-                  value={simulationParams.airborne}
+                  max="0.1"
+                  step="0.005"
+                  value={simulationParams.mortality_rate}
                   onChange={(e) => setSimulationParams(prev => ({
                     ...prev,
-                    airborne: parseFloat(e.target.value)
+                    mortality_rate: parseFloat(e.target.value)
                   }))}
                   className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1 text-gray-700">
-                  Waterborne ({simulationParams.waterborne})
+                  Recovery Rate ({(simulationParams.recovery_rate * 100).toFixed(1)}%)
                 </label>
                 <input
                   type="range"
                   min="0"
-                  max="1"
-                  step="0.1"
-                  value={simulationParams.waterborne}
+                  max="0.3"
+                  step="0.01"
+                  value={simulationParams.recovery_rate}
                   onChange={(e) => setSimulationParams(prev => ({
                     ...prev,
-                    waterborne: parseFloat(e.target.value)
+                    recovery_rate: parseFloat(e.target.value)
                   }))}
                   className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1 text-gray-700">
-                  Contact-based ({simulationParams.contact_based})
-                </label>
+            </div>
+          </div>
+
+          {/* Symptoms */}
+          <div>
+            <h3 className="text-lg font-semibold mb-3 text-gray-900">Symptoms</h3>
+            <div className="space-y-2">
+              <label className="flex items-center space-x-2">
                 <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={simulationParams.contact_based}
+                  type="checkbox"
+                  checked={simulationParams.fever}
                   onChange={(e) => setSimulationParams(prev => ({
                     ...prev,
-                    contact_based: parseFloat(e.target.value)
+                    fever: e.target.checked
                   }))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  className="rounded border-gray-300 text-red-600 focus:ring-red-500"
                 />
-              </div>
+                <span className="text-sm text-gray-700">Fever</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={simulationParams.coughing}
+                  onChange={(e) => setSimulationParams(prev => ({
+                    ...prev,
+                    coughing: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+                />
+                <span className="text-sm text-gray-700">Coughing</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={simulationParams.fatigue}
+                  onChange={(e) => setSimulationParams(prev => ({
+                    ...prev,
+                    fatigue: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-yellow-600 focus:ring-yellow-500"
+                />
+                <span className="text-sm text-gray-700">Fatigue</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={simulationParams.breathing_difficulty}
+                  onChange={(e) => setSimulationParams(prev => ({
+                    ...prev,
+                    breathing_difficulty: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+                />
+                <span className="text-sm text-gray-700">Breathing difficulty</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={simulationParams.loss_of_taste}
+                  onChange={(e) => setSimulationParams(prev => ({
+                    ...prev,
+                    loss_of_taste: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                <span className="text-sm text-gray-700">Loss of taste</span>
+              </label>
             </div>
           </div>
 
@@ -1035,12 +1206,19 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
               <button
                 onClick={startSimulation}
                 className={`w-full py-2 px-4 rounded-lg font-medium transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl ${
-                  isSimulationRunning
-                    ? 'bg-red-500 hover:bg-red-600 text-white'
-                    : 'bg-gradient-to-r from-[#C54444] to-[#fc6666] hover:from-[#B03A3A] hover:to-[#E55A5A] text-white'
+                  !hasSimulationStarted
+                    ? 'bg-gradient-to-r from-[#C54444] to-[#fc6666] hover:from-[#B03A3A] hover:to-[#E55A5A] text-white'
+                    : isSimulationRunning
+                    ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                    : 'bg-green-500 hover:bg-green-600 text-white'
                 }`}
               >
-                {isSimulationRunning ? 'Stop Simulation' : 'Start Simulation'}
+                {!hasSimulationStarted 
+                  ? 'Start Simulation' 
+                  : isSimulationRunning 
+                  ? 'Pause Simulation' 
+                  : 'Resume Simulation'
+                }
               </button>
               <button
                 onClick={resetSimulation}

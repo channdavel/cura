@@ -128,7 +128,7 @@ def start_simulation():
         # Create new simulation with enhanced parameters
         current_simulation = Simulation(
             nodes=nodes,
-            infection_rate=params.get('airborne', 0.05),
+            infection_rate=params.get('infection_rate', 0.05),
             recovery_rate=params.get('recovery_rate', 0.03),
             mortality_rate=params.get('mortality_rate', 0.005)
         )
