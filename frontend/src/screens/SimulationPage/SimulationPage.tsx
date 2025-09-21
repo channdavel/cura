@@ -69,8 +69,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     contact_based: true,
     
     // Core simulation rates
-    mortality_rate: 0.02,    // 2%
-    recovery_rate: 0.1,      // 10%
+    mortality_rate: 0.005,   // 0.5% - reduced from 2%
+    recovery_rate: 0.12,     // 12% - slightly increased for balance
     
     // Symptom toggles
     fever: false,
@@ -662,6 +662,12 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   };
 
   const fetchSimulationUpdate = async (simId: string) => {
+    // Don't make API calls if simulation is paused
+    if (isSimulationPaused) {
+      console.log('Simulation is paused, skipping API call');
+      return;
+    }
+    
     try {
       const response = await fetch(`http://localhost:8001/api/simulation/${simId}/state`);
       
@@ -822,30 +828,31 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   const calculateInfectionRate = (params: SimulationParams): number => {
     let baseRate = 0;
     
-    // Base transmission rates
-    if (params.airborne) baseRate += 0.4;      // Airborne is most contagious
-    if (params.waterborne) baseRate += 0.2;    // Waterborne is moderate
-    if (params.contact_based) baseRate += 0.3; // Contact-based is significant
+    // Higher base transmission rates for more visible spread
+    if (params.airborne) baseRate += 0.7;      // Increased from 0.4
+    if (params.waterborne) baseRate += 0.4;    // Increased from 0.2
+    if (params.contact_based) baseRate += 0.5; // Increased from 0.3
     
     // Symptom modifiers
-    if (params.coughing) baseRate *= 1.5;              // Coughing increases transmission
-    if (params.loss_of_taste) baseRate *= 1.3;         // People don't realize they're sick
+    if (params.coughing) baseRate *= 1.8;              // Higher multiplier - coughing spreads more
+    if (params.loss_of_taste) baseRate *= 1.5;         // Higher stealth transmission
     if (params.fever) baseRate *= 0.9;                 // Fever makes people stay home more
     if (params.breathing_difficulty) baseRate *= 0.8;  // Severe symptoms = less mobility
     
-    // Cap at reasonable maximum
-    return Math.min(baseRate, 0.8);
+    // Higher cap for more aggressive spread
+    return Math.min(baseRate, 0.95);
   };
 
   // Calculate adjusted mortality rate based on symptoms
   const calculateMortalityRate = (params: SimulationParams): number => {
     let rate = params.mortality_rate;
     
-    if (params.fever) rate *= 1.4;                     // Fever increases mortality
-    if (params.breathing_difficulty) rate *= 1.8;      // Breathing issues are serious
-    if (params.fatigue) rate *= 1.1;                   // Fatigue slightly increases risk
+    // Reduced mortality modifiers
+    if (params.fever) rate *= 1.2;                     // Reduced from 1.4
+    if (params.breathing_difficulty) rate *= 1.4;      // Reduced from 1.8
+    if (params.fatigue) rate *= 1.05;                  // Reduced from 1.1
     
-    return Math.min(rate, 0.15); // Cap at 15%
+    return Math.min(rate, 0.08); // Reduced cap from 15% to 8%
   };
 
   // Calculate adjusted recovery rate based on symptoms
@@ -929,36 +936,73 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       // Simulation has already started, toggle pause/resume
       if (isSimulationRunning) {
         // Pause the simulation
-        stopPolling();
-        setIsSimulationRunning(false);
-        setIsSimulationPaused(true);
-        console.log('Simulation paused');
+        try {
+          await fetch('http://localhost:8001/api/simulation/pause', { method: 'POST' });
+          stopPolling();
+          setIsSimulationRunning(false);
+          setIsSimulationPaused(true);
+          console.log('Simulation paused');
+        } catch (error) {
+          console.error('Failed to pause simulation:', error);
+        }
       } else {
         // Resume the simulation
-        setIsSimulationRunning(true);
-        setIsSimulationPaused(false);
-        if (simulationId) {
-          startPollingSimulationData(simulationId);
+        try {
+          console.log('Attempting to resume simulation with ID:', simulationId);
+          const resumeResponse = await fetch('http://localhost:8001/api/simulation/resume', { 
+            method: 'POST' 
+          });
+          
+          if (!resumeResponse.ok) {
+            throw new Error(`Resume failed: ${resumeResponse.status}`);
+          }
+          
+          console.log('Backend resume successful, updating frontend state');
+          setIsSimulationRunning(true);
+          setIsSimulationPaused(false);
+          
+          // Give the backend a moment to process the resume
+          setTimeout(() => {
+            // Ensure we have a simulation ID before starting polling
+            const simId = simulationId || 'default_simulation_id';
+            console.log('Starting polling with simulation ID:', simId);
+            startPollingSimulationData(simId);
+          }, 100);
+          
+          console.log('Simulation resumed successfully');
+        } catch (error) {
+          console.error('Failed to resume simulation:', error);
+          alert('Failed to resume simulation. Please try restarting.');
         }
-        console.log('Simulation resumed');
       }
     }
   };
 
   const resetSimulation = async () => {
-    // Stop polling
+    console.log('Starting simulation reset...');
+    
+    // Stop polling and clear all simulation state
     stopPolling();
     setIsSimulationRunning(false);
     setIsSimulationPaused(false);
     setHasSimulationStarted(false);
     
-    // Reset simulation on backend if we have a simulation ID
-    const currentSimId = simulationId || 'default';
+    // Reset backend simulation state first
     try {
-      await fetch(`http://localhost:8001/api/simulation/${currentSimId}/reset`, {
+      // Stop any running simulation
+      await fetch('http://localhost:8001/api/simulation/pause', { method: 'POST' });
+      
+      // Reset simulation data on backend
+      const currentSimId = simulationId || 'default';
+      const resetResponse = await fetch(`http://localhost:8001/api/simulation/${currentSimId}/reset`, {
         method: 'POST',
       });
-      console.log('Backend simulation reset successfully');
+      
+      if (resetResponse.ok) {
+        console.log('Backend simulation reset successfully');
+      } else {
+        console.warn('Backend reset response:', resetResponse.status);
+      }
     } catch (error) {
       console.error('Failed to reset simulation on backend:', error);
     }
