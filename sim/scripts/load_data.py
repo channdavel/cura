@@ -48,10 +48,11 @@ CB_ZIP_URL = "http://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_tract_500
 CB_ZIP_PATH = "cb_2023_us_tract_500k.zip"
 CB_SHP_BASENAME = "cb_2023_us_tract_500k.shp"
 
-# ACS 5-year dataset + variable for total population
+# ACS 5-year dataset + variables for total population and median income
 ACS_YEAR = 2023
 ACS_DATASET = f"http://api.census.gov/data/{ACS_YEAR}/acs/acs5"  # forced http
-ACS_VAR = "B01003_001E"  # Total population
+ACS_POP_VAR = "B01003_001E"  # Total population
+ACS_INCOME_VAR = "B19013_001E"  # Median household income in past 12 months
 
 # Optional: set CENSUS_API_KEY in your env for higher rate limits
 CENSUS_API_KEY = os.getenv("CENSUS_API_KEY", None)
@@ -103,13 +104,13 @@ def load_tracts() -> gpd.GeoDataFrame:
     gdf["area_km2"] = equal_area.geometry.area / 1_000_000.0
     return gdf[["GEOID","lon","lat","area_km2","geometry"]]
 
-def fetch_acs_population_for_state(state_fips: str) -> pd.DataFrame:
+def fetch_acs_data_for_state(state_fips: str) -> pd.DataFrame:
     """
-    Returns a DataFrame with columns: GEOID, population
+    Returns a DataFrame with columns: GEOID, population, median_income
     Query: by county:* and tract:* within state
     """
     # Build URL manually to control repeated 'in' params
-    query = f"{ACS_DATASET}?get=NAME,{ACS_VAR}&for=tract:*&in=state:{state_fips}&in=county:*"
+    query = f"{ACS_DATASET}?get=NAME,{ACS_POP_VAR},{ACS_INCOME_VAR}&for=tract:*&in=state:{state_fips}&in=county:*"
     if CENSUS_API_KEY:
         query += f"&key={CENSUS_API_KEY}"
 
@@ -120,18 +121,19 @@ def fetch_acs_population_for_state(state_fips: str) -> pd.DataFrame:
     df = pd.DataFrame(data, columns=header)
     # GEOID = state(2) + county(3) + tract(6)
     df["GEOID"] = df["state"] + df["county"] + df["tract"]
-    df["population"] = pd.to_numeric(df[ACS_VAR], errors="coerce")
-    return df[["GEOID","population"]]
+    df["population"] = pd.to_numeric(df[ACS_POP_VAR], errors="coerce")
+    df["median_income"] = pd.to_numeric(df[ACS_INCOME_VAR], errors="coerce")
+    return df[["GEOID","population","median_income"]]
 
-def fetch_acs_population_all_states() -> pd.DataFrame:
+def fetch_acs_data_all_states() -> pd.DataFrame:
     frames = []
-    for s in tqdm(STATE_FIPS, desc="ACS population"):
+    for s in tqdm(STATE_FIPS, desc="ACS data (population + income)"):
         try:
-            frames.append(fetch_acs_population_for_state(s))
+            frames.append(fetch_acs_data_for_state(s))
         except Exception as e:
             print(f"[WARN] ACS fetch failed for state {s}: {e}")
-    pop = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["GEOID"])
-    return pop
+    data = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["GEOID"])
+    return data
 
 def build_queen_neighbors(gdf: gpd.GeoDataFrame) -> dict:
     """
@@ -182,11 +184,12 @@ def main():
 
     tracts = load_tracts()  # GEOID, lon, lat, area_km2, geometry
 
-    pop = fetch_acs_population_all_states()  # GEOID, population
-    g = tracts.merge(pop, on="GEOID", how="left")
+    acs_data = fetch_acs_data_all_states()  # GEOID, population, median_income
+    g = tracts.merge(acs_data, on="GEOID", how="left")
 
     # compute density (pop per km^2). If missing pop, set to 0/NaN -> 0
     g["population"] = g["population"].fillna(0)
+    g["median_income"] = g["median_income"].fillna(0)  # Fill missing income with 0
     g["density_per_km2"] = g["population"] / g["area_km2"].replace({0: pd.NA})
     g["density_per_km2"] = g["density_per_km2"].fillna(0)
 
@@ -212,7 +215,7 @@ def main():
     # --- END NEW SECTION ---
 
     # write nodes table (kept for debug/inspection)
-    g[["GEOID","lon","lat","population","area_km2","density_per_km2"]].to_csv(OUT_NODES_CSV, index=False)
+    g[["GEOID","lon","lat","population","area_km2","density_per_km2","median_income"]].to_csv(OUT_NODES_CSV, index=False)
     with open(OUT_NEIGHBORS_JSON, "w") as f:
         json.dump(neighbors, f)
 

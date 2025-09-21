@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
+import { apiService, SimulationStatistics } from '../../services/apiService';
 
 // Types for our simulation data
 export interface TileData {
@@ -58,28 +59,25 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
+  const [statistics, setStatistics] = useState<SimulationStatistics | null>(null);
+  const [initialInfectionNode, setInitialInfectionNode] = useState<string | null>(null);
+  const [simulationSpeed, setSimulationSpeed] = useState(1.0); // Default 1x speed
 
   // Function to filter census data based on zoom level
   const filterDataByZoom = (allData: Record<string, CensusTractNode>, zoom: number) => {
     const totalTracts = Object.keys(allData).length;
     let maxTracts: number;
     
-    // Define zoom-based limits - show nothing until zoom 6, then show everything
-    if (zoom <= 5) {
-      maxTracts = 0; // Show nothing at low zoom levels
-    } else if (zoom <= 7) {
-      maxTracts = totalTracts; // Show all tracts when zoomed in
+    // Define zoom-based limits - show tracts at all zoom levels
+    if (zoom <= 3) {
+      maxTracts = Math.min(1000, totalTracts); // Show subset at very low zoom
+    } else if (zoom <= 5) {
+      maxTracts = Math.min(5000, totalTracts); // Show more tracts at medium zoom
     } else {
-      maxTracts = totalTracts; // Show all at high zoom
+      maxTracts = totalTracts; // Show all tracts when zoomed in
     }
     
     console.log(`Zoom level ${zoom}: showing ${maxTracts} of ${totalTracts} tracts`);
-    
-    if (maxTracts === 0) {
-      setCensusData({});
-      console.log('Hiding all tracts at low zoom level');
-      return;
-    }
     
     if (maxTracts >= totalTracts) {
       setCensusData(allData);
@@ -108,11 +106,13 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   useEffect(() => {
     const loadCensusData = async () => {
       setIsLoadingData(true);
+      console.log('Starting to load census data...');
       
       // Priority 1: Try GeoJSON with polygon boundaries
       try {
         console.log('Loading census data from GeoJSON...');
         const geojsonResponse = await fetch('/us_census_tracts.geojson');
+        console.log('GeoJSON response status:', geojsonResponse.status);
         
         if (geojsonResponse.ok) {
           const geojsonData = await geojsonResponse.json();
@@ -165,7 +165,7 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       // Fallback 2: Try backend API
       try {
         console.log('Loading census data from backend API...');
-        const apiResponse = await fetch('http://localhost:8000/api/census-data');
+        const apiResponse = await fetch('http://localhost:8001/api/census-data');
         
         if (apiResponse.ok) {
           const data = await apiResponse.json();
@@ -282,16 +282,20 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       // Wait for style to load before adding layers
       if (map.current && map.current.isStyleLoaded()) {
         addCensusDataLayers();
+        // Update initial infection indicator after layers are added
+        updateInitialInfectionIndicator(initialInfectionNode);
       } else if (map.current) {
         // If style isn't loaded yet, wait for it
         map.current.on('styledata', () => {
           if (map.current && map.current.isStyleLoaded()) {
             addCensusDataLayers();
+            // Update initial infection indicator after layers are added
+            updateInitialInfectionIndicator(initialInfectionNode);
           }
         });
       }
     }
-  }, [isMapLoaded, censusData]);
+  }, [isMapLoaded, censusData, initialInfectionNode]);
 
 
 
@@ -360,14 +364,14 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
             [
               'case',
               ['<=', ['get', 'infection_rate'], 0],
-              '#10B981', // Green (healthy)
-              ['<=', ['get', 'infection_rate'], 0.01],
-              '#F59E0B', // Yellow (low)
+              '#10B981', // Green (healthy - exactly 0%)
+              ['<=', ['get', 'infection_rate'], 0.005],
+              '#F59E0B', // Yellow (low - any infection up to 0.5%)
+              ['<=', ['get', 'infection_rate'], 0.02],
+              '#F97316', // Orange (medium - 0.5-2%)
               ['<=', ['get', 'infection_rate'], 0.05],
-              '#F97316', // Orange (medium)
-              ['<=', ['get', 'infection_rate'], 0.10],
-              '#EF4444', // Red (high)
-              '#7F1D1D'   // Dark red (critical)
+              '#EF4444', // Red (high - 2-5%)
+              '#7F1D1D'   // Dark red (critical - 5%+)
             ]
           ],
           'fill-opacity': [
@@ -530,12 +534,35 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
         }
       });
 
+      // Add initial infection indicator layer
+      map.current.addSource('initial-infection', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: []
+        }
+      });
+
+      map.current.addLayer({
+        id: 'initial-infection-indicator',
+        type: 'circle',
+        source: 'initial-infection',
+        paint: {
+          'circle-radius': 8,
+          'circle-color': '#DC2626', // Bright red
+          'circle-stroke-width': 3,
+          'circle-stroke-color': '#FFFFFF',
+          'circle-opacity': 0.9
+        }
+      });
+
       // Add click event for circles
       map.current.on('click', 'census-circles', (e) => {
         if (e.features && e.features[0]) {
           const properties = e.features[0].properties;
           if (properties) {
             setSelectedTile(properties.geoid);
+            updateInitialInfectionIndicator(properties.geoid); // Show red dot immediately on click
             const nodeInfo = censusData[properties.geoid];
             if (nodeInfo) {
               setSelectedTileData(nodeInfo);
@@ -559,6 +586,38 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     }
   };
 
+  const updateInitialInfectionIndicator = (nodeId: string | null) => {
+    if (!map.current || !isMapLoaded) return;
+    
+    const source = map.current.getSource('initial-infection') as mapboxgl.GeoJSONSource;
+    if (!source) return;
+    
+    if (nodeId && censusData[nodeId]) {
+      const node = censusData[nodeId];
+      const geojsonData = {
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          properties: {
+            geoid: nodeId,
+            label: 'Initial Infection Site'
+          },
+          geometry: {
+            type: 'Point',
+            coordinates: [node.lon, node.lat]
+          }
+        }]
+      };
+      source.setData(geojsonData as any);
+    } else {
+      // Clear the indicator
+      source.setData({
+        type: 'FeatureCollection',
+        features: []
+      } as any);
+    }
+  };
+
   // Polling functions for real-time simulation updates
   const startPollingSimulationData = (simId: string) => {
     setSimulationId(simId);
@@ -568,24 +627,26 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       clearInterval(pollingInterval);
     }
     
-    // Start new polling every 200ms for real-time updates
+    // Start new polling every 500ms since backend updates every 10 steps
     const interval = setInterval(async () => {
       await fetchSimulationUpdate(simId);
-    }, 200) as unknown as number;
+    }, 500) as unknown as number;
     
     setPollingInterval(interval);
   };
 
   const fetchSimulationUpdate = async (simId: string) => {
     try {
-      const { apiService } = await import('../../services/apiService');
-      const response = await fetch(`http://localhost:8000/api/simulation/${simId}/state`);
+      const response = await fetch(`http://localhost:8001/api/simulation/${simId}/state`);
       
       if (response.ok) {
         const data = await response.json();
         
         // Update the census data with new simulation values
         if (data.tiles) {
+          console.log('Received tiles data:', data.tiles.length, 'tiles');
+          console.log('Sample tile data:', data.tiles[0]);
+          
           const updatedCensusData = { ...allCensusData };
           
           data.tiles.forEach((tile: TileData) => {
@@ -596,6 +657,11 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
                 deceased_pop: tile.amount_deceased,
                 susceptible_pop: tile.total_population - tile.amount_infected - tile.amount_deceased,
               };
+              
+              // Log if this tile has infections
+              if (tile.amount_infected > 0) {
+                console.log('Found infected tile:', tile.geoid, 'infections:', tile.amount_infected, 'total:', tile.total_population);
+              }
             }
           });
           
@@ -611,10 +677,18 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
           updateMapDataSource(updatedCensusData);
         }
         
-        // If simulation is stopped, stop polling
+        // Also fetch updated statistics
+        const stats = await apiService.getStatistics();
+        if (stats) {
+          setStatistics(stats);
+        }
+        
+        // If simulation is stopped, stop polling but keep the current state visible
         if (data.status === 'stopped') {
+          console.log('Simulation completed - stopping updates but keeping final visible state');
           stopPolling();
           setIsSimulationRunning(false);
+          // Don't reset the data - keep showing the progression that occurred
         }
       }
     } catch (error) {
@@ -632,13 +706,23 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   const updateMapDataSource = (updatedData: Record<string, CensusTractNode>) => {
     if (!map.current || !isMapLoaded) return;
     
-    // Filter data by current zoom
+    console.log('updateMapDataSource called with', Object.keys(updatedData).length, 'tracts');
+    
+    // Filter data by current zoom, but always include infected tracts
     const filteredData: Record<string, CensusTractNode> = {};
     Object.entries(updatedData).forEach(([id, tract]) => {
-      if (censusData[id]) { // Only update tracts that are currently being displayed
+      // Always include tracts that are currently displayed OR have infections
+      if (censusData[id] || tract.infectious_pop > 0) {
         filteredData[id] = tract;
+        // Log infection rates for debugging
+        if (tract.infectious_pop > 0) {
+          const infectionRate = tract.population > 0 ? tract.infectious_pop / tract.population : 0;
+          console.log('Tract', id, 'infection rate:', infectionRate, 'infectious:', tract.infectious_pop, 'total:', tract.population);
+        }
       }
     });
+    
+    console.log('Filtered data:', Object.keys(filteredData).length, 'tracts');
     
     const censusNodes = Object.values(filteredData);
     const hasGeometry = censusNodes.some(node => node.extras?.geometry);
@@ -708,7 +792,26 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     };
   }, []);
 
-
+  const changeSimulationSpeed = async (newSpeed: number) => {
+    try {
+      const response = await fetch('http://localhost:8001/api/simulation/speed', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ speed: newSpeed }),
+      });
+      
+      if (response.ok) {
+        setSimulationSpeed(newSpeed);
+        console.log(`Simulation speed changed to ${newSpeed}x`);
+      } else {
+        console.error('Failed to change simulation speed');
+      }
+    } catch (error) {
+      console.error('Error changing simulation speed:', error);
+    }
+  };
 
   const startSimulation = async () => {
     if (isSimulationRunning) {
@@ -737,6 +840,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
 
     try {
       setIsSimulationRunning(true);
+      setInitialInfectionNode(selectedTile); // Track the starting node
+      updateInitialInfectionIndicator(selectedTile); // Show red dot on map
       
       // Import apiService
       const { apiService } = await import('../../services/apiService');
@@ -747,6 +852,12 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       console.log('Simulation started with parameters:', simulationParams);
       console.log('Initial infected tile:', selectedTile);
       console.log('Backend response:', response);
+      
+      // Fetch initial statistics
+      const stats = await apiService.getStatistics();
+      if (stats) {
+        setStatistics(stats);
+      }
       
       // Start polling for updates
       startPollingSimulationData(response.id);
@@ -765,11 +876,14 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     setSelectedTile(null);
     setSelectedTileData(null);
     setSimulationId(null);
+    setStatistics(null);
+    setInitialInfectionNode(null); // Clear the starting node indicator
+    updateInitialInfectionIndicator(null); // Clear red dot from map
     
     // Reset simulation on backend if we have a simulation ID
     if (simulationId) {
       try {
-        await fetch(`http://localhost:8000/api/simulation/${simulationId}/reset`, {
+        await fetch(`http://localhost:8001/api/simulation/${simulationId}/reset`, {
           method: 'POST',
         });
       } catch (error) {
@@ -846,7 +960,7 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
               <h3 className="text-lg font-semibold mb-3 text-gray-900">Simulation Status</h3>
               <div className={`p-3 rounded-lg border ${isSimulationRunning ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
                 <p className="text-sm text-gray-700">
-                  {isSimulationRunning ? '🟢 Running' : '⭕ Stopped'}
+                  {isSimulationRunning ? '🟢 Running (showing progression)' : '⭕ Completed (final state hidden)'}
               </p>
             </div>
           </div>
@@ -929,8 +1043,146 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
               >
                 Reset Simulation
               </button>
+              
+              {/* Simulation Speed Controls */}
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="text-sm font-medium text-gray-700 mb-2">
+                  Simulation Speed: {simulationSpeed}x
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  <button
+                    onClick={() => changeSimulationSpeed(0.5)}
+                    className={`py-1 px-2 text-xs rounded ${
+                      simulationSpeed === 0.5 
+                        ? 'bg-blue-500 text-white' 
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    0.5x
+                  </button>
+                  <button
+                    onClick={() => changeSimulationSpeed(1.0)}
+                    className={`py-1 px-2 text-xs rounded ${
+                      simulationSpeed === 1.0 
+                        ? 'bg-blue-500 text-white' 
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    1x
+                  </button>
+                  <button
+                    onClick={() => changeSimulationSpeed(2.0)}
+                    className={`py-1 px-2 text-xs rounded ${
+                      simulationSpeed === 2.0 
+                        ? 'bg-blue-500 text-white' 
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    2x
+                  </button>
+                  <button
+                    onClick={() => changeSimulationSpeed(4.0)}
+                    className={`py-1 px-2 text-xs rounded ${
+                      simulationSpeed === 4.0 
+                        ? 'bg-blue-500 text-white' 
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    4x
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
+
+          {/* Comprehensive Statistics */}
+          {statistics && (
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-900">Pandemic Statistics</h3>
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-4 rounded-lg space-y-3">
+                {/* Day Counter */}
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600">Day {statistics.day || 0}</div>
+                  <div className="text-sm text-gray-600">Simulation Progress</div>
+                </div>
+                
+                {/* Population Overview */}
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="bg-white/70 p-2 rounded border">
+                    <div className="font-semibold text-gray-700">Total Population</div>
+                    <div className="text-lg font-bold text-gray-900">{(statistics.total_population || 0).toLocaleString()}</div>
+                  </div>
+                  <div className="bg-white/70 p-2 rounded border">
+                    <div className="font-semibold text-blue-700">Affected Areas</div>
+                    <div className="text-lg font-bold text-blue-600">{(statistics.infected_areas || 0).toLocaleString()}</div>
+                  </div>
+                </div>
+
+                {/* SIR Model Stats */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center p-2 bg-green-100 rounded border">
+                    <span className="font-medium text-green-800">💚 Susceptible</span>
+                    <div className="text-right">
+                      <div className="font-bold text-green-700">{(statistics.susceptible || 0).toLocaleString()}</div>
+                      <div className="text-xs text-green-600">
+                        {((statistics.susceptible || 0) / (statistics.total_population || 1) * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center p-2 bg-red-100 rounded border">
+                    <span className="font-medium text-red-800">Infectious</span>
+                    <div className="text-right">
+                      <div className="font-bold text-red-700">{(statistics.infectious || 0).toLocaleString()}</div>
+                      <div className="text-xs text-red-600">{(statistics.infection_rate || 0).toFixed(2)}%</div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center p-2 bg-blue-100 rounded border">
+                    <span className="font-medium text-blue-800">Recovered</span>
+                    <div className="text-right">
+                      <div className="font-bold text-blue-700">{(statistics.recovered || 0).toLocaleString()}</div>
+                      <div className="text-xs text-blue-600">
+                        {((statistics.recovered || 0) / (statistics.total_population || 1) * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center p-2 bg-gray-100 rounded border">
+                    <span className="font-medium text-gray-800">Deceased</span>
+                    <div className="text-right">
+                      <div className="font-bold text-gray-700">{(statistics.deceased || 0).toLocaleString()}</div>
+                      <div className="text-xs text-gray-600">
+                        {((statistics.deceased || 0) / (statistics.total_population || 1) * 100).toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Key Metrics */}
+                <div className="pt-2 border-t border-blue-200">
+                  <div className="text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Infection Rate:</span>
+                      <span className="font-semibold text-red-600">{(statistics.infection_rate || 0).toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Mortality Rate:</span>
+                      <span className="font-semibold text-gray-700">
+                        {((statistics.deceased || 0) / (statistics.total_population || 1) * 100).toFixed(3)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Recovery Rate:</span>
+                      <span className="font-semibold text-blue-600">
+                        {((statistics.recovered || 0) / (statistics.total_population || 1) * 100).toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Selected Tile Info */}
           {/* Selected Tile Info */}
@@ -956,40 +1208,12 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
                 {selectedTileData.is_quarantined && (
                   <p className="text-sm text-purple-700 font-semibold">🔒 QUARANTINED</p>
                 )}
+                {initialInfectionNode === selectedTile && (
+                  <p className="text-sm text-red-700 font-semibold">🔴 INITIAL INFECTION SITE</p>
+                )}
               </div>
             </div>
           )}
-
-          {/* Color Legend */}
-          <div>
-            <h3 className="text-lg font-semibold mb-3 text-gray-900">Color Legend</h3>
-            <div className="space-y-2">
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-green-500 rounded-full"></div>
-                <span className="text-sm text-gray-700">Healthy (0%)</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-yellow-500 rounded-full"></div>
-                <span className="text-sm text-gray-700">Low (0-1%)</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-orange-500 rounded-full"></div>
-                <span className="text-sm text-gray-700">Medium (1-5%)</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-red-500 rounded-full"></div>
-                <span className="text-sm text-gray-700">High (5-10%)</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-red-900 rounded-full"></div>
-                <span className="text-sm text-gray-700">Critical (10%+)</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-purple-500 rounded-full border-2 border-white"></div>
-                <span className="text-sm text-gray-700">Quarantined</span>
-              </div>
-            </div>
-          </div>
 
           {/* Data Loading Status */}
           {isLoadingData && (
@@ -1027,20 +1251,64 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       <div className="flex-1 relative">
         <div ref={mapContainer} className="w-full h-full" />
         
-        {/* Zoom Level of Detail Indicator */}
-        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-3 z-10">
-          <h3 className="text-sm font-medium text-gray-800 mb-2">Level of Detail</h3>
-          <div className="text-xs text-gray-600 space-y-1">
-            <div>Zoom: {currentZoom}</div>
-            <div>Showing: {Object.keys(censusData).length.toLocaleString()} tracts</div>
-            <div>Total: {Object.keys(allCensusData).length.toLocaleString()} tracts</div>
-            {currentZoom <= 5 && (
-              <div className="text-blue-600 font-medium">Zoom to level 6+ to see census data</div>
-            )}
-            {currentZoom >= 6 && Object.keys(censusData).length > 0 && (
-              <div className="text-green-600 font-medium">Showing all census tracts</div>
-            )}
-          </div>
+        {/* Statistics Overview */}
+        <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg p-4 z-10 min-w-[280px]">
+          {statistics ? (
+            <div>
+              <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center">
+                Simulation Status
+              </h3>
+              <div className="text-xs text-gray-700 space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Day:</span>
+                  <span className="font-bold text-blue-600">{statistics.day}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Infectious:</span>
+                  <span className="font-bold text-red-600">{(statistics.infectious || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Recovered:</span>
+                  <span className="font-bold text-blue-600">{(statistics.recovered || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Deceased:</span>
+                  <span className="font-bold text-gray-600">{(statistics.deceased || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Affected Areas:</span>
+                  <span className="font-bold text-orange-600">{(statistics.infected_areas || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Infection Rate:</span>
+                  <span className="font-bold text-red-500">{(statistics.infection_rate || 0).toFixed(2)}%</span>
+                </div>
+                {initialInfectionNode && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <div className="flex items-center text-red-600">
+                      <div className="w-2 h-2 bg-red-600 rounded-full mr-2"></div>
+                      <span className="text-xs font-medium">Started: {initialInfectionNode}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <h3 className="text-sm font-medium text-gray-800 mb-2">Census Data</h3>
+              <div className="text-xs text-gray-600 space-y-1">
+                <div>Zoom: {currentZoom}</div>
+                <div>Showing: {Object.keys(censusData).length.toLocaleString()} tracts</div>
+                <div>Total: {Object.keys(allCensusData).length.toLocaleString()} tracts</div>
+                {currentZoom <= 5 && (
+                  <div className="text-blue-600 font-medium">Zoom to level 6+ to see census data</div>
+                )}
+                {currentZoom >= 6 && Object.keys(censusData).length > 0 && (
+                  <div className="text-green-600 font-medium">Click a tract to start simulation</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         
         {/* API Key Warning */}

@@ -1,6 +1,6 @@
 // API Service for communicating with the epidemic simulation backend
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = 'http://localhost:8001'; // Force port 8001
 
 export interface TileData {
   geoid: string;
@@ -22,17 +22,33 @@ export interface SimulationResponse {
   tiles: TileData[];
 }
 
+export interface SimulationStatistics {
+  day: number;
+  total_population: number;
+  susceptible: number;
+  infectious: number;
+  recovered: number;
+  deceased: number;
+  infected_areas: number;
+  infection_rate: number;
+  mortality_rate?: number;
+  recovery_rate?: number;
+}
+
 class ApiService {
   private baseURL: string;
 
   constructor() {
     this.baseURL = API_BASE_URL;
+    console.log('ApiService initialized with baseURL:', this.baseURL);
   }
 
-  // Get initial tile data
+    // Get initial tile data
   async getTiles(): Promise<TileData[]> {
     try {
-      const response = await fetch(`${this.baseURL}/api/tiles`);
+      const url = `${this.baseURL}/api/tiles`;
+      console.log('Fetching tiles from URL:', url);
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -54,7 +70,9 @@ class ApiService {
   // Start a new simulation
   async startSimulation(params: SimulationParams, initialInfectedTile?: string): Promise<SimulationResponse> {
     try {
-      const response = await fetch(`${this.baseURL}/api/simulation/start`, {
+      const url = `${this.baseURL}/api/simulation/start`;
+      console.log('Starting simulation with URL:', url);
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -127,6 +145,22 @@ class ApiService {
       }
     } catch (error) {
       console.warn('Failed to reset simulation on backend:', error);
+    }
+  }
+
+  // Get comprehensive simulation statistics
+  async getStatistics(): Promise<SimulationStatistics | null> {
+    try {
+      const response = await fetch(`${this.baseURL}/api/statistics`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.warn('Failed to get statistics from backend:', error);
+      return null;
     }
   }
 }
