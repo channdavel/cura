@@ -158,16 +158,14 @@ def run_simulation_background():
             # Update census data with new values
             for geoid, node in current_simulation.nodes.items():
                 if geoid in census_data:
-                    census_data[geoid].update({
-                        "susceptible_pop": node.susceptible_pop,
-                        "infectious_pop": node.infectious_pop,
-                        "recovered_pop": node.recovered_pop,
-                        "deceased_pop": node.deceased_pop,
-                        "is_quarantined": node.is_quarantined
-                    })
+                    census_data[geoid]["susceptible_pop"] = node.susceptible_pop
+                    census_data[geoid]["infectious_pop"] = node.infectious_pop
+                    census_data[geoid]["recovered_pop"] = node.recovered_pop
+                    census_data[geoid]["deceased_pop"] = node.deceased_pop
+                    census_data[geoid]["is_quarantined"] = node.is_quarantined
             
-            # Sleep to control simulation speed
-            time.sleep(0.1)  # 100ms between steps
+            # Sleep to control simulation speed (faster updates)
+            time.sleep(0.05)  # 50ms between steps for faster updates
             
         except Exception as e:
             print(f"Simulation error: {e}")

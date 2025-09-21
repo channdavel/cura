@@ -94,6 +94,41 @@ class ApiService {
       console.warn('Failed to stop simulation on backend:', error);
     }
   }
+
+  // Get simulation state
+  async getSimulationState(simulationId: string): Promise<SimulationResponse> {
+    try {
+      const response = await fetch(`${this.baseURL}/api/simulation/${simulationId}/state`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.warn('Failed to get simulation state from backend:', error);
+      return {
+        id: simulationId,
+        status: 'stopped',
+        tiles: []
+      };
+    }
+  }
+
+  // Reset simulation
+  async resetSimulation(simulationId: string): Promise<void> {
+    try {
+      const response = await fetch(`${this.baseURL}/api/simulation/${simulationId}/reset`, {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+    } catch (error) {
+      console.warn('Failed to reset simulation on backend:', error);
+    }
+  }
 }
 
 export const apiService = new ApiService();

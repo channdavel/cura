@@ -56,6 +56,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
   });
   const [isSimulationRunning, setIsSimulationRunning] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [simulationId, setSimulationId] = useState<string | null>(null);
+  const [pollingInterval, setPollingInterval] = useState<number | null>(null);
 
   // Function to filter census data based on zoom level
   const filterDataByZoom = (allData: Record<string, CensusTractNode>, zoom: number) => {
@@ -557,18 +559,267 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     }
   };
 
-
-
-  const startSimulation = () => {
-    setIsSimulationRunning(!isSimulationRunning);
-    // TODO: Connect to backend API
-    console.log('Simulation started with parameters:', simulationParams);
+  // Polling functions for real-time simulation updates
+  const startPollingSimulationData = (simId: string) => {
+    setSimulationId(simId);
+    
+    // Clear any existing polling
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+    }
+    
+    // Start new polling every 200ms for real-time updates
+    const interval = setInterval(async () => {
+      await fetchSimulationUpdate(simId);
+    }, 200) as unknown as number;
+    
+    setPollingInterval(interval);
   };
 
-  const resetSimulation = () => {
+  const fetchSimulationUpdate = async (simId: string) => {
+    try {
+      const { apiService } = await import('../../services/apiService');
+      const response = await fetch(`http://localhost:8000/api/simulation/${simId}/state`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Update the census data with new simulation values
+        if (data.tiles) {
+          const updatedCensusData = { ...allCensusData };
+          
+          data.tiles.forEach((tile: TileData) => {
+            if (updatedCensusData[tile.geoid]) {
+              updatedCensusData[tile.geoid] = {
+                ...updatedCensusData[tile.geoid],
+                infectious_pop: tile.amount_infected,
+                deceased_pop: tile.amount_deceased,
+                susceptible_pop: tile.total_population - tile.amount_infected - tile.amount_deceased,
+              };
+            }
+          });
+          
+          setAllCensusData(updatedCensusData);
+          filterDataByZoom(updatedCensusData, currentZoom);
+          
+          // Update selected tile data if it's currently selected
+          if (selectedTile && updatedCensusData[selectedTile]) {
+            setSelectedTileData(updatedCensusData[selectedTile]);
+          }
+          
+          // Update map data source for real-time visualization
+          updateMapDataSource(updatedCensusData);
+        }
+        
+        // If simulation is stopped, stop polling
+        if (data.status === 'stopped') {
+          stopPolling();
+          setIsSimulationRunning(false);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch simulation update:', error);
+    }
+  };
+
+  const stopPolling = () => {
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      setPollingInterval(null);
+    }
+  };
+
+  const updateMapDataSource = (updatedData: Record<string, CensusTractNode>) => {
+    if (!map.current || !isMapLoaded) return;
+    
+    // Filter data by current zoom
+    const filteredData: Record<string, CensusTractNode> = {};
+    Object.entries(updatedData).forEach(([id, tract]) => {
+      if (censusData[id]) { // Only update tracts that are currently being displayed
+        filteredData[id] = tract;
+      }
+    });
+    
+    const censusNodes = Object.values(filteredData);
+    const hasGeometry = censusNodes.some(node => node.extras?.geometry);
+    
+    if (hasGeometry && map.current.getSource('census-polygons')) {
+      // Update polygon data
+      const geojsonData = {
+        type: 'FeatureCollection',
+        features: censusNodes
+          .filter(node => node.extras?.geometry)
+          .map(node => ({
+            type: 'Feature',
+            properties: {
+              geoid: node.id,
+              population: node.population,
+              infectious_pop: node.infectious_pop,
+              recovered_pop: node.recovered_pop,
+              deceased_pop: node.deceased_pop,
+              population_density: node.population_density,
+              healthcare_capacity: node.healthcare_capacity,
+              is_quarantined: node.is_quarantined,
+              infection_rate: node.population > 0 ? node.infectious_pop / node.population : 0
+            },
+            geometry: node.extras.geometry
+          }))
+      };
+      
+      const source = map.current.getSource('census-polygons') as mapboxgl.GeoJSONSource;
+      if (source) {
+        source.setData(geojsonData as any);
+      }
+    } else if (map.current.getSource('census-data')) {
+      // Update circle data
+      const geojsonData = {
+        type: 'FeatureCollection',
+        features: censusNodes.map(node => ({
+          type: 'Feature',
+          properties: {
+            geoid: node.id,
+            population: node.population,
+            infectious_pop: node.infectious_pop,
+            recovered_pop: node.recovered_pop,
+            deceased_pop: node.deceased_pop,
+            population_density: node.population_density,
+            healthcare_capacity: node.healthcare_capacity,
+            is_quarantined: node.is_quarantined,
+            infection_rate: node.population > 0 ? node.infectious_pop / node.population : 0
+          },
+          geometry: {
+            type: 'Point',
+            coordinates: [node.lon, node.lat]
+          }
+        }))
+      };
+      
+      const source = map.current.getSource('census-data') as mapboxgl.GeoJSONSource;
+      if (source) {
+        source.setData(geojsonData as any);
+      }
+    }
+  };
+
+  // Cleanup polling on component unmount
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, []);
+
+
+
+  const startSimulation = async () => {
+    if (isSimulationRunning) {
+      // Stop the simulation
+      try {
+        // Stop polling
+        stopPolling();
+        setIsSimulationRunning(false);
+        
+        // Stop simulation on backend if we have a simulation ID
+        if (simulationId) {
+          const { apiService } = await import('../../services/apiService');
+          await apiService.stopSimulation(simulationId);
+          console.log('Simulation stopped');
+        }
+      } catch (error) {
+        console.error('Failed to stop simulation:', error);
+      }
+      return;
+    }
+
+    if (!selectedTile) {
+      alert('Please select a census tract by clicking on the map first. The selected tract will be the initial infection point for the simulation.');
+      return;
+    }
+
+    try {
+      setIsSimulationRunning(true);
+      
+      // Import apiService
+      const { apiService } = await import('../../services/apiService');
+      
+      // Start simulation with selected tile as initial infection point
+      const response = await apiService.startSimulation(simulationParams, selectedTile);
+      
+      console.log('Simulation started with parameters:', simulationParams);
+      console.log('Initial infected tile:', selectedTile);
+      console.log('Backend response:', response);
+      
+      // Start polling for updates
+      startPollingSimulationData(response.id);
+      
+    } catch (error) {
+      console.error('Failed to start simulation:', error);
+      setIsSimulationRunning(false);
+      alert('Failed to start simulation. Please check the backend connection.');
+    }
+  };
+
+  const resetSimulation = async () => {
+    // Stop polling
+    stopPolling();
     setIsSimulationRunning(false);
     setSelectedTile(null);
     setSelectedTileData(null);
+    setSimulationId(null);
+    
+    // Reset simulation on backend if we have a simulation ID
+    if (simulationId) {
+      try {
+        await fetch(`http://localhost:8000/api/simulation/${simulationId}/reset`, {
+          method: 'POST',
+        });
+      } catch (error) {
+        console.error('Failed to reset simulation on backend:', error);
+      }
+    }
+    
+    // Reload original census data
+    const loadCensusData = async () => {
+      try {
+        const geojsonResponse = await fetch('/us_census_tracts.geojson');
+        if (geojsonResponse.ok) {
+          const geojsonData = await geojsonResponse.json();
+          if (geojsonData.features && geojsonData.features.length > 0) {
+            const convertedData: Record<string, CensusTractNode> = {};
+            geojsonData.features.forEach((feature: any) => {
+              const props = feature.properties;
+              if (props && props.GEOID && props.lon && props.lat) {
+                convertedData[props.GEOID] = {
+                  id: props.GEOID,
+                  lat: props.lat,
+                  lon: props.lon,
+                  population: props.population || 0,
+                  infectious_pop: props.infectious_pop || 0,
+                  recovered_pop: props.recovered_pop || 0,
+                  deceased_pop: props.deceased_pop || 0,
+                  susceptible_pop: props.susceptible_pop || props.population || 0,
+                  area_km2: props.area_km2 || 1,
+                  population_density: props.population_density || 0,
+                  healthcare_capacity: props.healthcare_capacity || 0,
+                  mobility_factor: props.mobility_factor || 1,
+                  climate_factor: props.climate_factor || 1,
+                  neighbors: props.neighbors || [],
+                  is_quarantined: props.is_quarantined || false,
+                  extras: {
+                    geometry: feature.geometry
+                  }
+                };
+              }
+            });
+            setAllCensusData(convertedData);
+            filterDataByZoom(convertedData, currentZoom);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to reload census data:', error);
+      }
+    };
+    
+    await loadCensusData();
     console.log('Simulation reset');
   };
 
