@@ -4,6 +4,7 @@ from matplotlib.gridspec import GridSpec
 from sim.core.entities import load_graph
 from sim.core.simulation import Simulation
 import numpy as np
+import random
 
 # --- Config ---
 NODES_CSV = "tract_nodes.csv"
@@ -11,8 +12,31 @@ NEIGHBORS_JSON = "tract_neighbors.json"
 SIM_DAYS = 360
 INFECTION_RATE = 0.1
 RECOVERY_RATE = 0.01
-MORTALITY_RATE = 0.005
+MORTALITY_RATE = 0.0001
+SOCIOECONOMIC_IMPACT = 1.0  # 0.0 = no income effect, 1.0 = full income effect
 SEED_NODES = 1
+RNG_SEED = 42  # Set to None for random behavior, or any integer for reproducible results
+
+def seed_infection_in_dc(sim, nodes, num_nodes: int = 1):
+    """Seeds infection specifically in Washington DC (FIPS code 11)."""
+    # Find all nodes in Washington DC (GEOID starts with "11")
+    dc_nodes = [node_id for node_id in nodes.keys() if node_id.startswith("11")]
+    
+    if not dc_nodes:
+        print("Warning: No Washington DC nodes found. Using random seeding instead.")
+        sim.seed_infection(num_nodes)
+        return
+    
+    # Randomly select from DC nodes only
+    num_to_infect = min(num_nodes, len(dc_nodes))
+    infected_nodes = random.sample(dc_nodes, num_to_infect)
+    
+    for node_id in infected_nodes:
+        node = nodes[node_id]
+        node.susceptible_pop -= 1
+        node.infectious_pop += 1
+    
+    print(f"Seeded infection in {num_to_infect} Washington DC nodes: {infected_nodes}")
 
 def run_simulation():
     """Main function to run and visualize the pandemic simulation."""
@@ -32,9 +56,11 @@ def run_simulation():
         infection_rate=INFECTION_RATE,
         recovery_rate=RECOVERY_RATE,
         mortality_rate=MORTALITY_RATE,
+        socioeconomic_impact=SOCIOECONOMIC_IMPACT,
+        rng_seed=RNG_SEED,
     )
-    sim.seed_infection(num_nodes=SEED_NODES)
-    print(f"Seeded infection in {SEED_NODES} nodes.")
+    seed_infection_in_dc(sim, nodes, num_nodes=SEED_NODES)
+    print(f"Pandemic started in Washington DC with {SEED_NODES} initial infections.")
 
     # 3. Setup Visualization
     plt.style.use('dark_background')

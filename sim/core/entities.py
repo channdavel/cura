@@ -26,6 +26,7 @@ class Node:
     population: int
     area_km2: float
     population_density: float  # people per km^2
+    median_income: float = 0.0  # median household income in dollars
 
     # ---- Graph / topology ----
     neighbors: List[str] = field(default_factory=list)
@@ -53,7 +54,7 @@ class Node:
     def from_csv_row(cls, row: Dict[str, str]) -> "Node":
         """
         Build a Node from a CSV row produced by tract_nodes.csv.
-        Expected keys: GEOID, lon, lat, population, area_km2, density_per_km2
+        Expected keys: GEOID, lon, lat, population, area_km2, density_per_km2, median_income
         """
         geoid = row["GEOID"]
         lon = float(row["lon"])
@@ -61,6 +62,7 @@ class Node:
         population = int(float(row["population"]))  # handles "123.0"
         area_km2 = float(row["area_km2"])
         density = float(row["density_per_km2"])
+        median_income = float(row.get("median_income", 0))  # Default to 0 if missing
 
         node = cls(
             id=geoid,
@@ -69,6 +71,7 @@ class Node:
             population=population,
             area_km2=area_km2,
             population_density=density,
+            median_income=median_income,
         )
         # Initialize compartments and healthcare capacity
         node.susceptible_pop = population

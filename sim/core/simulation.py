@@ -4,13 +4,47 @@ from typing import Dict, List
 from sim.core.entities import Node
 
 class Simulation:
-    def __init__(self, nodes: Dict[str, Node], infection_rate: float, recovery_rate: float, mortality_rate: float):
+    def __init__(self, nodes: Dict[str, Node], infection_rate: float, recovery_rate: float, mortality_rate: float, 
+                 socioeconomic_impact: float = 0.3, rng_seed: int = None):
         self.nodes = nodes
         self.infection_rate = infection_rate
         self.recovery_rate = recovery_rate
         self.mortality_rate = mortality_rate
+        self.socioeconomic_impact = socioeconomic_impact  # 0.0 = no impact, 1.0 = full impact
         self.day = 0
-        self.daily_new_infections = 0  # Add this line
+        self.daily_new_infections = 0
+        
+        # Set random seed for reproducibility
+        if rng_seed is not None:
+            random.seed(rng_seed)
+            np.random.seed(rng_seed)
+            print(f"RNG seed set to: {rng_seed}")
+        
+        # Calculate income statistics for normalization
+        self._calculate_income_stats()
+
+    def _calculate_income_stats(self):
+        """Calculate income statistics for normalization, handling zero values."""
+        all_incomes = [node.median_income for node in self.nodes.values() if node.median_income > 0]
+        
+        if not all_incomes:
+            # Fallback if no valid income data
+            self.income_median = 70000  # US median household income
+            print("Warning: No valid income data found. Using US median of $70,000.")
+        else:
+            self.income_median = np.median(all_incomes)
+            print(f"National median income calculated: ${self.income_median:,.0f}")
+            
+            # Optional: Print some stats for debugging
+            income_25th = np.percentile(all_incomes, 25)
+            income_75th = np.percentile(all_incomes, 75)
+            print(f"Income range - 25th: ${income_25th:,.0f}, "
+                  f"Median: ${self.income_median:,.0f}, "
+                  f"75th: ${income_75th:,.0f}")
+            
+            zero_income_count = sum(1 for node in self.nodes.values() if node.median_income <= 0)
+            if zero_income_count > 0:
+                print(f"Note: {zero_income_count} nodes have zero/missing income (no socioeconomic effect)")
 
     def seed_infection(self, num_nodes: int = 1):
         """Randomly infects a number of nodes to start the simulation."""
@@ -19,6 +53,43 @@ class Simulation:
             node = self.nodes[node_id]
             node.susceptible_pop -= 1
             node.infectious_pop += 1
+
+    def calculate_socioeconomic_factor(self, node: Node) -> float:
+        """
+        Calculate transmission modifier based on median household income relative to national median.
+        
+        Logic:
+        - Income = 0: No socioeconomic effect (return 1.0)
+        - Income < median: Boost transmission (factor > 1.0)
+        - Income > median: Reduce transmission (factor < 1.0)
+        - Income = median: No effect (factor = 1.0)
+        
+        Returns multiplier: 1.0 = baseline transmission rate
+        """
+        if node.median_income <= 0:
+            # For missing income data, ignore socioeconomic effects completely
+            return 1.0
+        
+        # Calculate income ratio relative to national median
+        income_ratio = node.median_income / self.income_median
+        
+        # Convert ratio to transmission multiplier
+        if income_ratio < 1.0:
+            # Below median income = higher transmission
+            # Scale: 0.5x median income = 1.5x transmission, 0.75x median = 1.25x transmission
+            base_multiplier = 1.0 + (1.0 - income_ratio) * 0.5  # Max 1.5x at 0 income
+        else:
+            # Above median income = lower transmission  
+            # Scale: 2x median income = 0.75x transmission, 1.5x median = 0.875x transmission
+            base_multiplier = 1.0 - (income_ratio - 1.0) * 0.25  # Min 0.75x at very high income
+            base_multiplier = max(0.6, base_multiplier)  # Floor at 0.6x transmission
+        
+        # Apply tunable socioeconomic impact
+        # socioeconomic_impact = 0: no effect (factor = 1.0)
+        # socioeconomic_impact = 1: full effect (factor = base_multiplier)
+        final_factor = 1.0 + self.socioeconomic_impact * (base_multiplier - 1.0)
+        
+        return final_factor
 
     def step(self):
         """
@@ -44,13 +115,13 @@ class Simulation:
                 continue
 
             # --- 1. Intra-node spread (within the tract) ---
-            # Growth factor is influenced by density.
-            # A simple approach: scale density to be a multiplier.
+            # Growth factor is influenced by density and socioeconomic status
             density_factor = (node.population_density / 1000) + 1 # Simple scaling
+            socioeconomic_factor = self.calculate_socioeconomic_factor(node)
 
             # Calculate potential new infections within this node based on SIR model
             potential_intra_node_infections = (
-                daily_infection_rate * density_factor *
+                daily_infection_rate * density_factor * socioeconomic_factor *
                 node.susceptible_pop * node.infectious_pop
             ) / node.population if node.population > 0 else 0
             
@@ -69,8 +140,7 @@ class Simulation:
             infection_pressure = node.infectious_pop / node.population if node.population > 0 else 0
 
             # Base mobility rate - what % of people interact between neighboring regions daily
-            # In the future, this could be per-node (urban vs rural)
-            base_mobility_rate = 0.01  # 0.5% daily inter-regional interaction
+            base_mobility_rate = 0.01
 
             # Attempt to infect each neighbor using flow model
             for neighbor_id in node.neighbors:
