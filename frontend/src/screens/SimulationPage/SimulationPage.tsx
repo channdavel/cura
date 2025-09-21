@@ -62,23 +62,26 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
     const totalTracts = Object.keys(allData).length;
     let maxTracts: number;
     
-    // Define zoom-based limits to maintain performance
-    if (zoom <= 3) {
-      maxTracts = Math.min(500, totalTracts);
-    } else if (zoom <= 5) {
-      maxTracts = Math.min(2000, totalTracts);
+    // Define zoom-based limits - show nothing until zoom 6, then show everything
+    if (zoom <= 5) {
+      maxTracts = 0; // Show nothing at low zoom levels
     } else if (zoom <= 7) {
-      maxTracts = Math.min(8000, totalTracts);
-    } else if (zoom <= 9) {
-      maxTracts = Math.min(20000, totalTracts);
+      maxTracts = totalTracts; // Show all tracts when zoomed in
     } else {
       maxTracts = totalTracts; // Show all at high zoom
     }
     
     console.log(`Zoom level ${zoom}: showing ${maxTracts} of ${totalTracts} tracts`);
     
+    if (maxTracts === 0) {
+      setCensusData({});
+      console.log('Hiding all tracts at low zoom level');
+      return;
+    }
+    
     if (maxTracts >= totalTracts) {
       setCensusData(allData);
+      console.log('Showing all tracts at zoom level 6+');
       return;
     }
     
@@ -95,6 +98,7 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       filteredData[id] = tract;
     });
     
+    console.log(`Applied zoom filtering: ${Object.keys(filteredData).length} tracts selected for display`);
     setCensusData(filteredData);
   };
 
@@ -116,10 +120,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
             // Convert GeoJSON to our census data format
             const convertedData: Record<string, CensusTractNode> = {};
             
-            // Limit to 10k for performance
-            const limitedFeatures = geojsonData.features.slice(0, 10000);
-            
-            limitedFeatures.forEach((feature: any) => {
+            // Load all features - no limit
+            geojsonData.features.forEach((feature: any) => {
               const props = feature.properties;
               if (props && props.GEOID && props.lon && props.lat) {
                 convertedData[props.GEOID] = {
@@ -161,7 +163,7 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       // Fallback 2: Try backend API
       try {
         console.log('Loading census data from backend API...');
-        const apiResponse = await fetch('http://localhost:8000/api/census-data?limit=10000');
+        const apiResponse = await fetch('http://localhost:8000/api/census-data');
         
         if (apiResponse.ok) {
           const data = await apiResponse.json();
@@ -191,20 +193,20 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
         
         const data = await response.json();
         
-        // Limit to 10k and load census tract data
-        const limitedData: Record<string, CensusTractNode> = {};
-        const entries = Object.entries(data).slice(0, 10000);
-        entries.forEach(([key, value]) => {
-          limitedData[key] = value as CensusTractNode;
+        // Load all census tract data - no limit
+        const allData: Record<string, CensusTractNode> = {};
+        Object.entries(data).forEach(([key, value]) => {
+          allData[key] = value as CensusTractNode;
         });
         
-        setAllCensusData(limitedData);
-        filterDataByZoom(limitedData, currentZoom);
-        console.log(`Loaded ${Object.keys(limitedData).length} census tracts from static file`);
+        setAllCensusData(allData);
+        filterDataByZoom(allData, currentZoom);
+        console.log(`Loaded ${Object.keys(allData).length} census tracts from static file`);
         
       } catch (staticError) {
         console.error('Failed to load from static file:', staticError);
         // Use empty data as fallback - map will show without census tracts
+        setAllCensusData({});
         setCensusData({});
       } finally {
         setIsLoadingData(false);
@@ -300,8 +302,8 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       return;
     }
 
-    // Limit to 10k nodes for performance
-    const censusNodes = Object.values(censusData).slice(0, 10000);
+    // Use all census nodes - no performance limit
+    const censusNodes = Object.values(censusData);
     
     // Check if we have geometry data for polygons
     const hasGeometry = censusNodes.some(node => node.extras?.geometry);
@@ -370,13 +372,13 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
             'interpolate',
             ['linear'],
             ['get', 'population'],
-            0, 0.1,      // Very transparent for areas with no population
-            500, 0.2,    // Low opacity for very sparse areas
-            1500, 0.3,   // Rural areas
-            3000, 0.5,   // Small towns
-            5000, 0.65,  // Medium density suburban
-            8000, 0.8,   // High density suburban/urban
-            12000, 0.9,  // Dense urban areas
+            0, 0.05,     // Almost invisible for areas with no population
+            500, 0.1,    // Very low opacity for very sparse areas  
+            1500, 0.15,  // Still quite transparent for rural areas
+            3000, 0.3,   // Small towns - more visible jump
+            5000, 0.5,   // Medium density suburban - noticeable
+            8000, 0.75,  // High density suburban/urban - prominent
+            12000, 0.9,  // Dense urban areas - very visible
             20000, 1.0   // Maximum opacity for very dense urban areas
           ]
         }
@@ -755,9 +757,15 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
                 <p className="text-sm text-green-700">
                   ✅ Loaded {Object.keys(censusData).length.toLocaleString()} census tracts
                 </p>
-                <p className="text-xs text-green-600 mt-1">
-                  Displaying first 5,000 for performance
-                </p>
+                {Object.keys(censusData).length === Object.keys(allCensusData).length ? (
+                  <p className="text-xs text-green-600 mt-1">
+                    Displaying all available census tracts
+                  </p>
+                ) : (
+                  <p className="text-xs text-blue-600 mt-1">
+                    Zoom in to see all {Object.keys(allCensusData).length.toLocaleString()} tracts
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -767,6 +775,22 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
       {/* Map Container */}
       <div className="flex-1 relative">
         <div ref={mapContainer} className="w-full h-full" />
+        
+        {/* Zoom Level of Detail Indicator */}
+        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-3 z-10">
+          <h3 className="text-sm font-medium text-gray-800 mb-2">Level of Detail</h3>
+          <div className="text-xs text-gray-600 space-y-1">
+            <div>Zoom: {currentZoom}</div>
+            <div>Showing: {Object.keys(censusData).length.toLocaleString()} tracts</div>
+            <div>Total: {Object.keys(allCensusData).length.toLocaleString()} tracts</div>
+            {currentZoom <= 5 && (
+              <div className="text-blue-600 font-medium">Zoom to level 6+ to see census data</div>
+            )}
+            {currentZoom >= 6 && Object.keys(censusData).length > 0 && (
+              <div className="text-green-600 font-medium">Showing all census tracts</div>
+            )}
+          </div>
+        </div>
         
         {/* API Key Warning */}
         {(!import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || import.meta.env.VITE_MAPBOX_ACCESS_TOKEN === 'your_mapbox_api_key_here') && (

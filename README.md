@@ -131,9 +131,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 Built with ❤️ using React, TypeScript, and Vite
+=======
+# cura
 
-# Backend Simulation
-
+# Backend
 ## Schema
 ```json
 [
@@ -149,3 +150,4 @@ Built with ❤️ using React, TypeScript, and Vite
     ]
 ]
 ```
+>>>>>>> sim
