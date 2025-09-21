@@ -34,7 +34,7 @@ export const LandingPage = ({ onStartSimulation }: LandingPageProps): JSX.Elemen
                 <div className="absolute -inset-1 bg-gradient-to-r from-[#C54444] to-[#fc6666] rounded-xl opacity-0 group-hover:opacity-20 transition-opacity duration-300 -z-10"></div>
               </div>
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-gray-900 group-hover:text-[#C54444] transition-colors duration-300">
+                <span className="text-2xl font-light text-gray-900 group-hover:text-[#C54444] transition-colors duration-300">
                   Cura
                 </span>
               </div>
@@ -82,17 +82,17 @@ export const LandingPage = ({ onStartSimulation }: LandingPageProps): JSX.Elemen
           Meet
         </h1>
 
-        <h1 className="absolute top-[223px] left-[1073px] [text-shadow:4px_4px_4px_#00000040] [font-family:'SF_Pro-Regular',Helvetica] font-normal text-black text-[204px] tracking-[0] leading-[normal] whitespace-nowrap translate-y-[-1rem] animate-fade-in opacity-0 [--animation-delay:400ms]">
+        <h1 className="absolute top-[223px] left-[1073px] [text-shadow:4px_4px_4px_#00000040] [font-family:'SF_Pro-Light',Helvetica] font-normal text-black text-[204px] tracking-[0] leading-[normal] whitespace-nowrap translate-y-[-1rem] animate-fade-in opacity-0 [--animation-delay:400ms]">
           Cura
         </h1>
 
         {/* Threads Background */}
         <div className="absolute top-[-300px] left-[-500px] w-[2880px] h-[1864px] translate-y-[-1rem] animate-fade-in opacity-0 [--animation-delay:600ms] z-0">
           <Threads
-            color={[0.77, 0.27, 0.27]} // #C54444 in RGB normalized
+            color={[0.77, 0.27, 0.27]} // #ff0000ff in RGB normalized
             amplitude={1}
-            distance={0}
-            enableMouseInteraction={true}
+            distance={0.4}
+            enableMouseInteraction={false}
           />
         </div>
 
