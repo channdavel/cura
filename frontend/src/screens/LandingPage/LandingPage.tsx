@@ -6,7 +6,11 @@ const navigationItems = [
   
 ];
 
-export const LandingPage = (): JSX.Element => {
+interface LandingPageProps {
+  onStartSimulation: () => void;
+}
+
+export const LandingPage = ({ onStartSimulation }: LandingPageProps): JSX.Element => {
   return (
     <div
       className="bg-white overflow-hidden w-full min-h-screen relative flex justify-center"
@@ -53,6 +57,7 @@ export const LandingPage = (): JSX.Element => {
             {/* CTA Buttons */}
             <div className="flex items-center space-x-4">
               <Button
+                onClick={onStartSimulation}
                 className="bg-gradient-to-r from-[#C54444] to-[#fc6666] hover:from-[#B03A3A] hover:to-[#E55A5A] text-white px-6 py-2.5 rounded-xl font-semibold text-sm transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
                 variant="default"
               >

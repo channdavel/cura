@@ -11,6 +11,9 @@ dist/
 build/
 out/
 
+# Vite
+.vite/
+
 # Environment variables
 .env
 .env.local

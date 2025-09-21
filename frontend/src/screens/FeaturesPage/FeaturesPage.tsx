@@ -1,5 +1,9 @@
 
-export const FeaturesPage = (): JSX.Element => {
+interface FeaturesPageProps {
+  onStartSimulation: () => void;
+}
+
+export const FeaturesPage = ({ onStartSimulation }: FeaturesPageProps): JSX.Element => {
   return (
     <div className="min-h-screen bg-white py-20">
       <div className="max-w-7xl mx-auto px-6">
@@ -318,7 +322,10 @@ export const FeaturesPage = (): JSX.Element => {
                 Start your pandemic response strategy with our advanced simulation platform
               </p>
               
-              <button className="group relative px-8 py-4 bg-white text-[#C54444] font-bold text-lg rounded-2xl shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all duration-300">
+              <button 
+                onClick={onStartSimulation}
+                className="group relative px-8 py-4 bg-white text-[#C54444] font-bold text-lg rounded-2xl shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all duration-300"
+              >
                 <span className="relative z-10 flex items-center space-x-3">
                   <span>Start Simulation</span>
                   <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
