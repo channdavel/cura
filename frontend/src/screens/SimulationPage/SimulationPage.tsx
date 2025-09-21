@@ -300,10 +300,17 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onBackToLanding 
             ]
           ],
           'fill-opacity': [
-            'case',
-            ['>', ['get', 'infection_rate'], 0],
-            0.8, // More opaque for infected areas
-            0.6  // Less opaque for healthy areas
+            'interpolate',
+            ['linear'],
+            ['get', 'population'],
+            0, 0.1,      // Very transparent for areas with no population
+            500, 0.2,    // Low opacity for very sparse areas
+            1500, 0.3,   // Rural areas
+            3000, 0.5,   // Small towns
+            5000, 0.65,  // Medium density suburban
+            8000, 0.8,   // High density suburban/urban
+            12000, 0.9,  // Dense urban areas
+            20000, 1.0   // Maximum opacity for very dense urban areas
           ]
         }
       });
