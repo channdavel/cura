@@ -7,6 +7,7 @@ export interface TileData {
   total_population: number;
   amount_infected: number;
   amount_deceased: number;
+  coordinates?: [number, number];
 }
 
 export interface SimulationParams {
@@ -71,7 +72,6 @@ class ApiService {
       return await response.json();
     } catch (error) {
       console.warn('Failed to start simulation on backend:', error);
-      // Return mock response
       return {
         id: 'mock-simulation-' + Date.now(),
         status: 'running',
@@ -92,51 +92,6 @@ class ApiService {
       }
     } catch (error) {
       console.warn('Failed to stop simulation on backend:', error);
-    }
-  }
-
-  // Get current simulation state
-  async getSimulationState(simulationId: string): Promise<SimulationResponse> {
-    try {
-      const response = await fetch(`${this.baseURL}/api/simulation/${simulationId}/state`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.warn('Failed to get simulation state from backend:', error);
-      return {
-        id: simulationId,
-        status: 'stopped',
-        tiles: await this.getTiles()
-      };
-    }
-  }
-
-  // Subscribe to real-time simulation updates via Server-Sent Events
-  subscribeToUpdates(simulationId: string, onUpdate: (data: TileData[]) => void): EventSource | null {
-    try {
-      const eventSource = new EventSource(`${this.baseURL}/api/simulation/${simulationId}/updates`);
-      
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          onUpdate(data.tiles);
-        } catch (error) {
-          console.error('Failed to parse SSE data:', error);
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        console.warn('SSE connection error:', error);
-      };
-
-      return eventSource;
-    } catch (error) {
-      console.warn('Failed to establish SSE connection:', error);
-      return null;
     }
   }
 }
